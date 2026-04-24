@@ -174,6 +174,103 @@ try {
     ]);
 }
 
+function syncLocalValidateDate(?string $value, string $format = 'Y-m-d'): bool {
+    if ($value === null || $value === '') {
+        return false;
+    }
+
+    $parsed = DateTime::createFromFormat($format, $value);
+    return $parsed && $parsed->format($format) === $value;
+}
+
+function syncPrepareRecordsForSync(PDO $db, string $tableName, array $records): array {
+    $valid = [];
+    $failed = [];
+    $seen = [];
+
+    foreach ($records as $record) {
+        $recordId = isset($record['id']) ? (int)$record['id'] : 0;
+
+        try {
+            switch ($tableName) {
+                case 'members_men':
+                case 'members_women':
+                    if (empty($record['member_code']) || empty($record['name']) || empty($record['phone'])) {
+                        throw new InvalidArgumentException('Required member fields are missing');
+                    }
+                    $joinDate = $record['join_date'] ?? $record['admission_date'] ?? null;
+                    if (!syncLocalValidateDate($joinDate)) {
+                        throw new InvalidArgumentException('Invalid join/admission date');
+                    }
+                    $dedupeKey = 'member:' . trim((string)$record['member_code']);
+                    break;
+
+                case 'payments_men':
+                case 'payments_women':
+                    if (!isset($record['member_id']) || (int)$record['member_id'] <= 0) {
+                        throw new InvalidArgumentException('Payment has invalid member_id');
+                    }
+                    if (!isset($record['amount']) || !is_numeric($record['amount']) || (float)$record['amount'] <= 0) {
+                        throw new InvalidArgumentException('Payment amount must be greater than zero');
+                    }
+                    if (!syncLocalValidateDate($record['payment_date'] ?? null)) {
+                        throw new InvalidArgumentException('Payment date is invalid');
+                    }
+                    $dedupeKey = 'payment:' . ($record['invoice_number'] ?? '') . ':' . (int)$record['member_id'] . ':' . $record['payment_date'] . ':' . number_format((float)$record['amount'], 2, '.', '');
+                    break;
+
+                case 'attendance_men':
+                case 'attendance_women':
+                    if (!isset($record['member_id']) || (int)$record['member_id'] <= 0) {
+                        throw new InvalidArgumentException('Attendance has invalid member_id');
+                    }
+                    if (empty($record['check_in']) || strtotime((string)$record['check_in']) === false) {
+                        throw new InvalidArgumentException('Attendance check_in is invalid');
+                    }
+                    if (!empty($record['check_out']) && strtotime((string)$record['check_out']) === false) {
+                        throw new InvalidArgumentException('Attendance check_out is invalid');
+                    }
+                    $dedupeKey = 'attendance:' . (int)$record['member_id'] . ':' . (string)$record['check_in'];
+                    break;
+
+                case 'expenses':
+                    if (empty($record['expense_type'])) {
+                        throw new InvalidArgumentException('Expense type is required');
+                    }
+                    if (!isset($record['amount']) || !is_numeric($record['amount']) || (float)$record['amount'] < 0) {
+                        throw new InvalidArgumentException('Expense amount is invalid');
+                    }
+                    if (!syncLocalValidateDate($record['expense_date'] ?? null)) {
+                        throw new InvalidArgumentException('Expense date is invalid');
+                    }
+                    $dedupeKey = 'expense:' . trim((string)$record['expense_type']) . ':' . ($record['expense_date'] ?? '') . ':' . number_format((float)$record['amount'], 2, '.', '');
+                    break;
+
+                default:
+                    $dedupeKey = 'id:' . $recordId;
+                    break;
+            }
+
+            if (isset($seen[$dedupeKey])) {
+                throw new InvalidArgumentException('Duplicate record detected in this sync batch');
+            }
+
+            $seen[$dedupeKey] = true;
+            $valid[] = $record;
+        } catch (Throwable $e) {
+            $failed[] = [
+                'record_id' => $recordId,
+                'error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    return [
+        'valid' => $valid,
+        'failed' => $failed,
+    ];
+}
+
 function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forceSyncAll = false) {
     $totalSynced = 0;
     $totalFailed = 0;
@@ -279,6 +376,23 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
         $chunkRecordCount = count($records);
         
         error_log("Processing chunk {$chunkNumber}/{$totalChunks} for {$tableName} (records " . ($offset + 1) . " - " . ($offset + $chunkRecordCount) . ")");
+
+        $prepared = syncPrepareRecordsForSync($db, $tableName, $records);
+        $records = $prepared['valid'];
+        foreach ($prepared['failed'] as $failedRecord) {
+            $recordId = (int)($failedRecord['record_id'] ?? 0);
+            $errorMessage = (string)($failedRecord['error'] ?? 'Record failed validation before sync');
+            $totalFailed++;
+            $allErrors[] = "{$tableName} record {$recordId}: {$errorMessage}";
+            if ($recordId > 0) {
+                updateSyncLog($db, $tableName, $recordId, 'failed', $errorMessage);
+            }
+        }
+
+        if (empty($records)) {
+            error_log("Chunk {$chunkNumber} for {$tableName} skipped after validation; no valid records remained.");
+            continue;
+        }
         
         // For payments and attendance, add member_code to each record for reliable cross-database matching
         if (strpos($tableName, 'payments_') === 0 || strpos($tableName, 'attendance_') === 0) {
@@ -314,20 +428,53 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
             }
             unset($record);
             error_log("Chunk {$chunkNumber}: " . ucfirst($recordLabel) . " member_code lookup - {$recordsWithCode} with code, {$recordsWithoutCode} without code");
+
+            $records = array_values(array_filter($records, function ($record) use ($db, $tableName, &$totalFailed, &$allErrors) {
+                if (!empty($record['member_code'])) {
+                    return true;
+                }
+
+                $recordId = isset($record['id']) ? (int)$record['id'] : 0;
+                $message = 'Could not resolve member_code for sync';
+                $totalFailed++;
+                $allErrors[] = "{$tableName} record {$recordId}: {$message}";
+                if ($recordId > 0) {
+                    updateSyncLog($db, $tableName, $recordId, 'failed', $message);
+                }
+                return false;
+            }));
+
+            if (empty($records)) {
+                error_log("Chunk {$chunkNumber} for {$tableName} has no records left after member_code validation.");
+                continue;
+            }
         }
         
         // Prepare data for sync
+        $chunkRecordCount = count($records);
         $data = [
             'action' => 'sync',
             'table_type' => $tableType,
             'records' => $records
         ];
+        $jsonPayload = json_encode($data);
+        if ($jsonPayload === false) {
+            $payloadError = 'Failed to encode sync payload: ' . json_last_error_msg();
+            foreach ($records as $record) {
+                if (!empty($record['id'])) {
+                    updateSyncLog($db, $tableName, (int)$record['id'], 'failed', $payloadError);
+                }
+            }
+            $totalFailed += $chunkRecordCount;
+            $allErrors[] = "Chunk {$chunkNumber} sync failed: {$payloadError}";
+            continue;
+        }
         
         // Send chunk to online server
         $ch = curl_init($onlineServerUrl . '/api/sync.php?api_key=' . urlencode($apiKey));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonPayload);
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         curl_setopt($ch, CURLOPT_TIMEOUT, 600); // 10 minutes per chunk
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
@@ -356,8 +503,20 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
         }
         
         $result = json_decode($response, true);
+        if (!is_array($result)) {
+            $errorMsg = 'Invalid response from online server';
+            error_log("Chunk {$chunkNumber} sync failed: {$errorMsg}. Raw response: " . substr((string)$response, 0, 500));
+            foreach ($records as $record) {
+                if (!empty($record['id'])) {
+                    updateSyncLog($db, $tableName, (int)$record['id'], 'failed', $errorMsg);
+                }
+            }
+            $totalFailed += $chunkRecordCount;
+            $allErrors[] = "Chunk {$chunkNumber} sync failed: {$errorMsg}";
+            continue;
+        }
         
-        if ($httpCode !== 200 || !$result || !$result['success']) {
+        if ($httpCode !== 200 || empty($result['success'])) {
             $errorMsg = $result['message'] ?? 'Unknown error';
             error_log("Chunk {$chunkNumber} sync failed (HTTP {$httpCode}): {$errorMsg}");
             // Log error but continue with next chunk

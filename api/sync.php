@@ -56,6 +56,125 @@ function syncRecordFailure(array &$recordResults, array &$errors, ?int $recordId
     ];
 }
 
+function syncValidateDate(?string $value, string $format = 'Y-m-d'): bool
+{
+    if ($value === null || $value === '') {
+        return false;
+    }
+
+    $parsed = DateTime::createFromFormat($format, $value);
+    return $parsed && $parsed->format($format) === $value;
+}
+
+function syncNormalizeDecimal($value, bool $allowNull = false): ?string
+{
+    if ($value === null || $value === '') {
+        return $allowNull ? null : '0.00';
+    }
+
+    if (!is_numeric($value)) {
+        throw new InvalidArgumentException('Numeric value expected');
+    }
+
+    return number_format((float)$value, 2, '.', '');
+}
+
+function syncNormalizeRecord(string $tableType, array $record): array
+{
+    switch ($tableType) {
+        case 'members_men':
+        case 'members_women':
+            if (empty($record['member_code']) || empty($record['name']) || empty($record['phone'])) {
+                throw new InvalidArgumentException('Member record requires member_code, name, and phone');
+            }
+
+            $joinDate = $record['join_date'] ?? $record['admission_date'] ?? null;
+            if (!syncValidateDate($joinDate)) {
+                throw new InvalidArgumentException('Member join_date/admission_date must be a valid YYYY-MM-DD date');
+            }
+
+            $record['member_code'] = trim((string)$record['member_code']);
+            $record['name'] = trim((string)$record['name']);
+            $record['phone'] = trim((string)$record['phone']);
+            $record['email'] = isset($record['email']) ? trim((string)$record['email']) : null;
+            $record['join_date'] = $joinDate;
+            $record['admission_date'] = $joinDate;
+            $record['monthly_fee'] = syncNormalizeDecimal($record['monthly_fee'] ?? 0);
+            $record['admission_fee'] = syncNormalizeDecimal($record['admission_fee'] ?? 0);
+            $record['locker_fee'] = syncNormalizeDecimal($record['locker_fee'] ?? 0);
+            $record['total_due_amount'] = syncNormalizeDecimal($record['total_due_amount'] ?? 0);
+
+            if (!empty($record['next_fee_due_date']) && !syncValidateDate((string)$record['next_fee_due_date'])) {
+                throw new InvalidArgumentException('next_fee_due_date must be a valid YYYY-MM-DD date');
+            }
+
+            $record['status'] = in_array(($record['status'] ?? 'active'), ['active', 'inactive'], true) ? $record['status'] : 'active';
+            return $record;
+
+        case 'payments_men':
+        case 'payments_women':
+            if (!isset($record['amount']) || !is_numeric($record['amount']) || (float)$record['amount'] <= 0) {
+                throw new InvalidArgumentException('Payment amount must be greater than zero');
+            }
+            if (!syncValidateDate($record['payment_date'] ?? null)) {
+                throw new InvalidArgumentException('payment_date must be a valid YYYY-MM-DD date');
+            }
+
+            $record['amount'] = syncNormalizeDecimal($record['amount']);
+            $record['remaining_amount'] = syncNormalizeDecimal($record['remaining_amount'] ?? 0);
+            $record['total_due_amount'] = syncNormalizeDecimal($record['total_due_amount'] ?? null, true);
+            $record['invoice_number'] = isset($record['invoice_number']) ? trim((string)$record['invoice_number']) : null;
+            $record['member_code'] = isset($record['member_code']) ? trim((string)$record['member_code']) : null;
+
+            if (!empty($record['due_date']) && !syncValidateDate((string)$record['due_date'])) {
+                throw new InvalidArgumentException('due_date must be a valid YYYY-MM-DD date');
+            }
+
+            return $record;
+
+        case 'expenses':
+            if (empty($record['expense_type'])) {
+                throw new InvalidArgumentException('Expense type is required');
+            }
+            if (!isset($record['amount']) || !is_numeric($record['amount']) || (float)$record['amount'] < 0) {
+                throw new InvalidArgumentException('Expense amount must be zero or greater');
+            }
+            if (!syncValidateDate($record['expense_date'] ?? null)) {
+                throw new InvalidArgumentException('expense_date must be a valid YYYY-MM-DD date');
+            }
+
+            $record['expense_type'] = trim((string)$record['expense_type']);
+            $record['amount'] = syncNormalizeDecimal($record['amount']);
+            return $record;
+
+        case 'attendance_men':
+        case 'attendance_women':
+            if (empty($record['check_in'])) {
+                throw new InvalidArgumentException('Attendance record requires check_in');
+            }
+
+            $checkIn = strtotime((string)$record['check_in']);
+            if ($checkIn === false) {
+                throw new InvalidArgumentException('check_in must be a valid datetime');
+            }
+
+            if (!empty($record['check_out'])) {
+                $checkOut = strtotime((string)$record['check_out']);
+                if ($checkOut === false) {
+                    throw new InvalidArgumentException('check_out must be a valid datetime');
+                }
+                if ($checkOut < $checkIn) {
+                    throw new InvalidArgumentException('check_out cannot be earlier than check_in');
+                }
+            }
+
+            $record['member_code'] = isset($record['member_code']) ? trim((string)$record['member_code']) : null;
+            return $record;
+    }
+
+    throw new InvalidArgumentException('Unsupported table type');
+}
+
 try {
     $input = file_get_contents('php://input');
     $data = json_decode($input, true);
@@ -69,12 +188,25 @@ try {
     $tableType = (string)($data['table_type'] ?? '');
     $records = $data['records'] ?? [];
     $recordCount = is_array($records) ? count($records) : 0;
+    $allowedTableTypes = ['members_men', 'members_women', 'payments_men', 'payments_women', 'expenses', 'attendance_men', 'attendance_women'];
 
     error_log("Online server received sync request: table_type={$tableType}, record_count={$recordCount}");
+
+    if (!in_array($tableType, $allowedTableTypes, true)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Invalid table type']);
+        exit;
+    }
 
     if (empty($records) || !is_array($records)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'No records provided or invalid format']);
+        exit;
+    }
+
+    if ($recordCount > 1000) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Too many records in one request. Maximum 1000 allowed.']);
         exit;
     }
 
@@ -96,11 +228,9 @@ try {
                 $sourceRecordId = isset($record['id']) ? (int)$record['id'] : null;
 
                 try {
-                    if (empty($record['member_code'])) {
-                        throw new InvalidArgumentException('Member record missing member_code');
-                    }
-
+                    $record = syncNormalizeRecord($tableType, $record);
                     $existing = $member->getByCode($record['member_code']);
+                    $db->beginTransaction();
 
                     if ($existing) {
                         $updateData = $record;
@@ -108,16 +238,25 @@ try {
                             $updateData['total_due_amount'] = $existing['total_due_amount'] ?? 0.00;
                         }
                         $member->update($existing['id'], $updateData);
+                        $member->syncActivityStatus((int)$existing['id']);
                     } else {
                         if (!isset($record['total_due_amount']) || $record['total_due_amount'] === null) {
                             $record['total_due_amount'] = 0.00;
                         }
-                        $member->create($record);
+                        $createdId = $member->create($record);
+                        if (!$createdId) {
+                            throw new RuntimeException('Failed to create member');
+                        }
+                        $member->syncActivityStatus((int)$createdId);
                     }
 
+                    $db->commit();
                     $synced++;
                     syncRecordSuccess($recordResults, $sourceRecordId);
                 } catch (Throwable $e) {
+                    if ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
                     $failed++;
                     syncRecordFailure($recordResults, $errors, $sourceRecordId, 'Member ' . ($record['member_code'] ?? 'N/A') . ': ' . $e->getMessage());
                 }
@@ -134,6 +273,7 @@ try {
                 $sourceRecordId = isset($record['id']) ? (int)$record['id'] : null;
 
                 try {
+                    $record = syncNormalizeRecord($tableType, $record);
                     $memberId = isset($record['member_id']) ? (int)$record['member_id'] : null;
                     $memberCode = $record['member_code'] ?? null;
 
@@ -183,15 +323,24 @@ try {
                         $existing = $checkStmt->fetch(PDO::FETCH_ASSOC) ?: null;
                     }
 
+                    $db->beginTransaction();
                     if ($existing) {
                         $payment->update($existing['id'], $record);
                     } else {
-                        $payment->create($record);
+                        $createdId = $payment->create($record);
+                        if (!$createdId) {
+                            throw new RuntimeException('Failed to create payment');
+                        }
                     }
+                    $member->syncActivityStatus($memberId);
+                    $db->commit();
 
                     $synced++;
                     syncRecordSuccess($recordResults, $sourceRecordId);
                 } catch (Throwable $e) {
+                    if ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
                     $failed++;
                     syncRecordFailure($recordResults, $errors, $sourceRecordId, 'Payment for member ' . ($record['member_code'] ?? $record['member_id'] ?? 'N/A') . ': ' . $e->getMessage());
                 }
@@ -205,6 +354,9 @@ try {
                 $sourceRecordId = isset($record['id']) ? (int)$record['id'] : null;
 
                 try {
+                    $record = syncNormalizeRecord($tableType, $record);
+                    $db->beginTransaction();
+
                     if (isset($record['id'])) {
                         $existing = $expense->getById($record['id']);
                         if ($existing) {
@@ -217,9 +369,13 @@ try {
                         $expense->create($record);
                     }
 
+                    $db->commit();
                     $synced++;
                     syncRecordSuccess($recordResults, $sourceRecordId);
                 } catch (Throwable $e) {
+                    if ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
                     $failed++;
                     syncRecordFailure($recordResults, $errors, $sourceRecordId, 'Expense: ' . $e->getMessage());
                 }
@@ -236,6 +392,7 @@ try {
                 $sourceRecordId = isset($record['id']) ? (int)$record['id'] : null;
 
                 try {
+                    $record = syncNormalizeRecord($tableType, $record);
                     $memberId = isset($record['member_id']) ? (int)$record['member_id'] : null;
                     $memberCode = $record['member_code'] ?? null;
 
@@ -260,6 +417,7 @@ try {
                     $checkStmt->execute();
                     $existing = $checkStmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
+                    $db->beginTransaction();
                     if ($existing) {
                         $attendance->update($existing['id'], [
                             'member_id' => $record['member_id'],
@@ -273,10 +431,14 @@ try {
                     } else {
                         $attendance->create($record);
                     }
+                    $db->commit();
 
                     $synced++;
                     syncRecordSuccess($recordResults, $sourceRecordId);
                 } catch (Throwable $e) {
+                    if ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
                     $failed++;
                     syncRecordFailure($recordResults, $errors, $sourceRecordId, 'Attendance for member ' . ($record['member_code'] ?? $record['member_id'] ?? 'N/A') . ': ' . $e->getMessage());
                 }
