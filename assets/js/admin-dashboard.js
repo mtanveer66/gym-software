@@ -8,13 +8,21 @@ let activeRequests = {}; // Track active fetch requests to cancel them if needed
 let isLoadingDashboard = false; // Prevent multiple simultaneous dashboard loads
 let memberStatusFilter = null; // 'active', 'inactive', or null for all
 let paymentsDefaultersFilter = false; // Show defaulters or regular payments
+let sectionRefreshInterval = null; // Lightweight real-time refresh for live sections
 
 document.addEventListener('DOMContentLoaded', function () {
     checkAuth();
     setupNavigation();
     setupMobileMenu();
     loadDashboard();
+    startSectionAutoRefresh();
     startAutoSync(); // Start auto-sync timer
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            startSectionAutoRefresh();
+        }
+    });
 
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
@@ -85,12 +93,45 @@ function setupNavigation() {
     });
 }
 
+function stopSectionAutoRefresh() {
+    if (sectionRefreshInterval) {
+        clearInterval(sectionRefreshInterval);
+        sectionRefreshInterval = null;
+    }
+}
+
+function startSectionAutoRefresh() {
+    stopSectionAutoRefresh();
+
+    const liveSections = {
+        'dashboard': { interval: 30000, refresh: () => loadDashboard() },
+        'attendance': { interval: 15000, refresh: () => loadAttendanceTable() },
+        'due-fees': { interval: 30000, refresh: () => loadDueFeesTable() }
+    };
+
+    const config = liveSections[currentSection];
+    if (!config) return;
+
+    sectionRefreshInterval = setInterval(() => {
+        if (document.hidden) return;
+        if (document.querySelector('.modal')) return;
+
+        try {
+            config.refresh();
+        } catch (err) {
+            console.error(`Live refresh failed for ${currentSection}:`, err);
+        }
+    }, config.interval);
+}
+
 function switchSection(section) {
     // Don't reload if already on this section
     if (currentSection === section && document.getElementById('contentBody').innerHTML !== '<div class="loading">Loading...</div>') {
+        startSectionAutoRefresh();
         return;
     }
 
+    stopSectionAutoRefresh();
     currentSection = section;
 
     // Cancel all active requests when switching sections
@@ -130,6 +171,7 @@ function switchSection(section) {
 
     // Load section content
     loadSection(section);
+    startSectionAutoRefresh();
 }
 
 function loadSection(section) {
@@ -362,7 +404,9 @@ function renderDashboard(data) {
     data = data || {};
     const financial = data.financial || {};
     const currentMonth = financial.current_month || {};
+    const financialToday = financial.today || {};
     const allTime = financial.all_time || {};
+    const operations = data.operations || {};
     const men = data.men || { stats: { total: 0, active: 0 }, recent: [] };
     const women = data.women || { stats: { total: 0, active: 0 }, recent: [] };
     const total = data.total || { members: 0, active: 0 };
@@ -378,14 +422,58 @@ function renderDashboard(data) {
                 <p class="stat-value">${total.active || 0}</p>
             </div>
             <div class="stat-card">
+                <h3>Checked In Now</h3>
+                <p class="stat-value">${operations.checked_in_now || 0}</p>
+                <small>Active sessions right now</small>
+            </div>
+            <div class="stat-card">
+                <h3>Overdue Members</h3>
+                <p class="stat-value">${operations.overdue || 0}</p>
+                <small>Due today: ${operations.due_today || 0}</small>
+            </div>
+        </div>
+        <div class="dashboard-stats" style="margin-top: 1.5rem;">
+            <div class="stat-card">
+                <h3>Today's Visits</h3>
+                <p class="stat-value">${operations.today_visits || 0}</p>
+                <small>Unique members: ${operations.today_unique_members || 0}</small>
+            </div>
+            <div class="stat-card">
+                <h3>New This Month</h3>
+                <p class="stat-value">${operations.new_this_month || 0}</p>
+                <small>Fresh signups this month</small>
+            </div>
+            <div class="stat-card">
+                <h3>Today's Collections</h3>
+                <p class="stat-value">${Utils.formatCurrency(financialToday.revenue || 0)}</p>
+                <small>Cash collected today</small>
+            </div>
+            <div class="stat-card">
+                <h3>Outstanding Active Due</h3>
+                <p class="stat-value">${Utils.formatCurrency(operations.active_due_amount || 0)}</p>
+                <small>Receivable from active members</small>
+            </div>
+        </div>
+        <div class="dashboard-stats" style="margin-top: 1.5rem;">
+            <div class="stat-card">
                 <h3>Men Members</h3>
                 <p class="stat-value">${men.stats?.total || 0}</p>
-                <small>Active: ${men.stats?.active || 0} | Inactive: ${men.stats?.inactive || 0}</small>
+                <small>Active: ${men.stats?.active || 0} | Checked in: ${men.stats?.checked_in_now || 0}</small>
             </div>
             <div class="stat-card">
                 <h3>Women Members</h3>
                 <p class="stat-value">${women.stats?.total || 0}</p>
-                <small>Active: ${women.stats?.active || 0} | Inactive: ${women.stats?.inactive || 0}</small>
+                <small>Active: ${women.stats?.active || 0} | Checked in: ${women.stats?.checked_in_now || 0}</small>
+            </div>
+            <div class="stat-card">
+                <h3>Men Dues</h3>
+                <p class="stat-value">${men.stats?.overdue || 0}</p>
+                <small>Due today: ${men.stats?.due_today || 0}</small>
+            </div>
+            <div class="stat-card">
+                <h3>Women Dues</h3>
+                <p class="stat-value">${women.stats?.overdue || 0}</p>
+                <small>Due today: ${women.stats?.due_today || 0}</small>
             </div>
         </div>
         <div class="dashboard-stats" style="margin-top: 1.5rem;">
@@ -2175,6 +2263,18 @@ function renderDueFeesSummary(summary) {
                     ${Utils.formatCurrency(summary.total_due_amount || 0)}
                 </p>
             </div>
+            <div class="stat-card">
+                <h3>Overdue Members</h3>
+                <p style="font-size: 2rem; font-weight: bold; color: #f39c12;">
+                    ${summary.overdue_members || 0}
+                </p>
+            </div>
+            <div class="stat-card">
+                <h3>Due Today</h3>
+                <p style="font-size: 2rem; font-weight: bold; color: #3498db;">
+                    ${summary.due_today || 0}
+                </p>
+            </div>
         </div>
     `;
     document.getElementById('dueFeesSummary').innerHTML = html;
@@ -3218,24 +3318,17 @@ function renderReport(data, type) {
                 <div class="report-content">
                     <h3>Member Statistics</h3>
                     <div class="stats-grid">
-                        <div class="stat-item">
-                            <strong>Total Men Members:</strong> ${data.men?.total || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Active Men:</strong> ${data.men?.active || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Total Women Members:</strong> ${data.women?.total || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Active Women:</strong> ${data.women?.active || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Total Members:</strong> ${(data.men?.total || 0) + (data.women?.total || 0)}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Total Active:</strong> ${(data.men?.active || 0) + (data.women?.active || 0)}
-                        </div>
+                        <div class="stat-item"><strong>Total Men Members:</strong> ${data.men?.total || 0}</div>
+                        <div class="stat-item"><strong>Active Men:</strong> ${data.men?.active || 0}</div>
+                        <div class="stat-item"><strong>Total Women Members:</strong> ${data.women?.total || 0}</div>
+                        <div class="stat-item"><strong>Active Women:</strong> ${data.women?.active || 0}</div>
+                        <div class="stat-item"><strong>Checked In Now:</strong> ${data.operations?.checked_in_now || 0}</div>
+                        <div class="stat-item"><strong>Overdue Members:</strong> ${data.operations?.overdue || 0}</div>
+                        <div class="stat-item"><strong>Due Today:</strong> ${data.operations?.due_today || 0}</div>
+                        <div class="stat-item"><strong>New This Month:</strong> ${data.operations?.new_this_month || 0}</div>
+                        <div class="stat-item"><strong>Total Members:</strong> ${(data.men?.total || 0) + (data.women?.total || 0)}</div>
+                        <div class="stat-item"><strong>Total Active:</strong> ${(data.men?.active || 0) + (data.women?.active || 0)}</div>
+                        <div class="stat-item"><strong>Outstanding Active Due:</strong> ${Utils.formatCurrency(data.operations?.active_due_amount || 0)}</div>
                     </div>
                 </div>
             `;
@@ -3245,6 +3338,12 @@ function renderReport(data, type) {
             resultsDiv.innerHTML = `
                 <div class="report-content">
                     <h3>Fee Defaulters (${defaulters.length})</h3>
+                    <div class="stats-grid" style="margin-bottom: 1rem;">
+                        <div class="stat-item"><strong>Total Defaulters:</strong> ${data.total_count || defaulters.length}</div>
+                        <div class="stat-item"><strong>Overdue Members:</strong> ${data.overdue_count || 0}</div>
+                        <div class="stat-item"><strong>Members With Outstanding Dues:</strong> ${data.outstanding_dues_count || 0}</div>
+                        <div class="stat-item"><strong>Total Outstanding:</strong> ${Utils.formatCurrency(data.total_outstanding_amount || 0)}</div>
+                    </div>
                     ${defaulters.length > 0 ? `
                         <table class="data-table">
                             <thead>
@@ -3252,31 +3351,30 @@ function renderReport(data, type) {
                                     <th>#</th>
                                     <th>Member Code</th>
                                     <th>Name</th>
+                                    <th>Gender</th>
                                     <th>Phone</th>
                                     <th>Next Fee Due</th>
                                     <th>Days Overdue</th>
+                                    <th>Due Amount</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${defaulters.map((d, idx) => {
-                const dueDate = new Date(d.next_fee_due_date);
-                const today = new Date();
-                const daysOverdue = Math.floor((today - dueDate) / (1000 * 60 * 60 * 24));
-                return `
+                                ${defaulters.map((d, idx) => `
                                         <tr>
                                             <td>${idx + 1}</td>
                                             <td>${d.member_code}</td>
                                             <td>${d.name}</td>
-                                            <td>${d.phone}</td>
-                                            <td>${Utils.formatDate(d.next_fee_due_date)}</td>
-                                            <td><span style="color: red; font-weight: bold;">${daysOverdue} days</span></td>
+                                            <td>${d.gender === 'women' ? '👩 Women' : '👨 Men'}</td>
+                                            <td>${d.phone || '-'}</td>
+                                            <td>${d.next_fee_due_date ? Utils.formatDate(d.next_fee_due_date) : 'N/A'}</td>
+                                            <td><span style="color: ${d.days_overdue > 0 ? 'red' : '#f39c12'}; font-weight: bold;">${d.days_overdue || 0} days</span></td>
+                                            <td><strong style="color: #e74c3c;">${Utils.formatCurrency(d.total_due_amount || 0)}</strong></td>
                                             <td>
-                                                <button class="btn btn-sm btn-primary" onclick="updateFee(${d.id}, '${d.member_code}')">Update Fee</button>
+                                                <button class="btn btn-sm btn-primary" onclick="currentGender='${d.gender}'; updateFee(${d.id}, '${d.member_code}')">Update Fee</button>
                                             </td>
                                         </tr>
-                                    `;
-            }).join('')}
+                                    `).join('')}
                             </tbody>
                         </table>
                     ` : '<p>No fee defaulters found. All members are up to date!</p>'}
@@ -3288,15 +3386,14 @@ function renderReport(data, type) {
                 <div class="report-content">
                     <h3>Payment Statistics</h3>
                     <div class="stats-grid">
-                        <div class="stat-item">
-                            <strong>Total Payments:</strong> ${data.total_payments || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Total Revenue:</strong> ${Utils.formatCurrency(data.total_revenue || 0)}
-                        </div>
-                        <div class="stat-item">
-                            <strong>Average Payment:</strong> ${Utils.formatCurrency(data.avg_payment || 0)}
-                        </div>
+                        <div class="stat-item"><strong>Total Payments:</strong> ${data.total_payments || 0}</div>
+                        <div class="stat-item"><strong>Total Revenue:</strong> ${Utils.formatCurrency(data.total_revenue || 0)}</div>
+                        <div class="stat-item"><strong>Average Payment:</strong> ${Utils.formatCurrency(data.avg_payment || 0)}</div>
+                        <div class="stat-item"><strong>Payments Today:</strong> ${data.payments_today || 0}</div>
+                        <div class="stat-item"><strong>Revenue Today:</strong> ${Utils.formatCurrency(data.revenue_today || 0)}</div>
+                        <div class="stat-item"><strong>Payments This Month:</strong> ${data.payments_this_month || 0}</div>
+                        <div class="stat-item"><strong>Revenue This Month:</strong> ${Utils.formatCurrency(data.revenue_this_month || 0)}</div>
+                        <div class="stat-item"><strong>Pending Remaining Amount:</strong> ${Utils.formatCurrency(data.pending_remaining_amount || 0)}</div>
                     </div>
                 </div>
             `;
@@ -3306,12 +3403,11 @@ function renderReport(data, type) {
                 <div class="report-content">
                     <h3>Attendance Statistics</h3>
                     <div class="stats-grid">
-                        <div class="stat-item">
-                            <strong>Today's Attendance:</strong> ${data.today || 0}
-                        </div>
-                        <div class="stat-item">
-                            <strong>This Month's Attendance:</strong> ${data.this_month || 0}
-                        </div>
+                        <div class="stat-item"><strong>Today's Attendance:</strong> ${data.today || 0}</div>
+                        <div class="stat-item"><strong>Today's Unique Members:</strong> ${data.today_unique_members || 0}</div>
+                        <div class="stat-item"><strong>Active Sessions Now:</strong> ${data.active_sessions || 0}</div>
+                        <div class="stat-item"><strong>This Month's Attendance:</strong> ${data.this_month || 0}</div>
+                        <div class="stat-item"><strong>Unique Members This Month:</strong> ${data.unique_members_this_month || 0}</div>
                     </div>
                 </div>
             `;
@@ -3887,6 +3983,7 @@ function handleLogout() {
         clearInterval(autoSyncInterval);
     }
 
+    stopSectionAutoRefresh();
     fetch('api/auth.php?action=logout', {
         method: 'POST'
     })

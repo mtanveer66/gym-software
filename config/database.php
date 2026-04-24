@@ -59,4 +59,9 @@ class Database {
 
         return $this->conn;
     }
+
+    public function isLocal() {
+        $host = strtolower((string)$this->host);
+        return in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+    }
 }

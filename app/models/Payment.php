@@ -7,11 +7,76 @@ class Payment {
     private $conn;
     private $gender;
     private $table;
+    private $availableColumns;
 
     public function __construct($db, $gender = 'men') {
         $this->conn = $db;
         $this->gender = in_array($gender, ['men', 'women']) ? $gender : 'men';
         $this->table = 'payments_' . $this->gender;
+        $this->availableColumns = $this->resolveAvailableColumns();
+    }
+
+    private function resolveAvailableColumns(): array {
+        static $cache = [];
+
+        if (isset($cache[$this->table])) {
+            return $cache[$this->table];
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COLUMN_NAME
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+        );
+        $stmt->bindValue(':table_name', $this->table, PDO::PARAM_STR);
+        $stmt->execute();
+
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        return $cache[$this->table] = array_fill_keys($columns, true);
+    }
+
+    private function hasColumn(string $column): bool {
+        return isset($this->availableColumns[$column]);
+    }
+
+    private function filterDataForSchema(array $data): array {
+        $filtered = [];
+        $defaults = [
+            'remaining_amount' => 0.00,
+            'total_due_amount' => null,
+            'due_date' => null,
+            'invoice_number' => null,
+            'payment_type' => null,
+            'payment_method' => 'Cash',
+            'received_by' => null,
+            'status' => 'completed',
+        ];
+
+        foreach ($defaults as $column => $defaultValue) {
+            if ($this->hasColumn($column)) {
+                $filtered[$column] = array_key_exists($column, $data) ? $data[$column] : $defaultValue;
+            }
+        }
+
+        foreach (['member_id', 'amount', 'payment_date'] as $requiredColumn) {
+            $filtered[$requiredColumn] = $data[$requiredColumn];
+        }
+
+        return $filtered;
+    }
+
+    private function bindPaymentValue(PDOStatement $stmt, string $placeholder, string $column, $value): void {
+        if (in_array($column, ['member_id'], true)) {
+            $stmt->bindValue($placeholder, (int)$value, PDO::PARAM_INT);
+            return;
+        }
+
+        if ($value === null) {
+            $stmt->bindValue($placeholder, null, PDO::PARAM_NULL);
+            return;
+        }
+
+        $stmt->bindValue($placeholder, $value, PDO::PARAM_STR);
     }
 
     public function getByMemberId($memberId, $limit = null, $offset = 0) {
@@ -63,22 +128,16 @@ class Payment {
     }
 
     public function create($data) {
-        $query = "INSERT INTO " . $this->table . " 
-            (member_id, amount, remaining_amount, total_due_amount, payment_date, due_date, invoice_number, status, received_by, payment_method) 
-            VALUES 
-            (:member_id, :amount, :remaining_amount, :total_due_amount, :payment_date, :due_date, :invoice_number, :status, :received_by, :payment_method)";
-        
+        $filteredData = $this->filterDataForSchema($data);
+        $columns = array_keys($filteredData);
+        $placeholders = array_map(static fn($column) => ':' . $column, $columns);
+
+        $query = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':member_id', $data['member_id'], PDO::PARAM_INT);
-        $stmt->bindValue(':amount', $data['amount'], PDO::PARAM_STR);
-        $stmt->bindValue(':remaining_amount', $data['remaining_amount'] ?? 0.00, PDO::PARAM_STR);
-        $stmt->bindValue(':total_due_amount', $data['total_due_amount'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':payment_date', $data['payment_date'], PDO::PARAM_STR);
-        $stmt->bindValue(':due_date', $data['due_date'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':invoice_number', $data['invoice_number'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':status', $data['status'] ?? 'completed', PDO::PARAM_STR);
-        $stmt->bindValue(':received_by', $data['received_by'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':payment_method', $data['payment_method'] ?? 'Cash', PDO::PARAM_STR);
+
+        foreach ($filteredData as $column => $value) {
+            $this->bindPaymentValue($stmt, ':' . $column, $column, $value);
+        }
 
         if ($stmt->execute()) {
             return $this->conn->lastInsertId();
@@ -87,33 +146,21 @@ class Payment {
     }
 
     public function update($id, $data) {
-        $query = "UPDATE " . $this->table . " SET 
-            member_id = :member_id,
-            amount = :amount,
-            remaining_amount = :remaining_amount,
-            total_due_amount = :total_due_amount,
-            payment_date = :payment_date,
-            due_date = :due_date,
-            invoice_number = :invoice_number,
-            status = :status,
-            received_by = :received_by,
-            payment_method = :payment_method
-            WHERE id = :id";
-        
+        $filteredData = $this->filterDataForSchema($data);
+        $assignments = [];
+
+        foreach (array_keys($filteredData) as $column) {
+            $assignments[] = "{$column} = :{$column}";
+        }
+
+        $query = "UPDATE {$this->table} SET " . implode(', ', $assignments) . " WHERE id = :id";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
-        $stmt->bindValue(':member_id', $data['member_id'], PDO::PARAM_INT);
-        $stmt->bindValue(':amount', $data['amount'], PDO::PARAM_STR);
-        $stmt->bindValue(':remaining_amount', $data['remaining_amount'] ?? 0.00, PDO::PARAM_STR);
-        $stmt->bindValue(':total_due_amount', $data['total_due_amount'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':payment_date', $data['payment_date'], PDO::PARAM_STR);
-        $stmt->bindValue(':due_date', $data['due_date'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':invoice_number', $data['invoice_number'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':status', $data['status'] ?? 'completed', PDO::PARAM_STR);
-        $stmt->bindValue(':received_by', $data['received_by'] ?? null, PDO::PARAM_STR);
-        $stmt->bindValue(':payment_method', $data['payment_method'] ?? 'Cash', PDO::PARAM_STR);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
+
+        foreach ($filteredData as $column => $value) {
+            $this->bindPaymentValue($stmt, ':' . $column, $column, $value);
+        }
 
         return $stmt->execute();
     }
 }
-

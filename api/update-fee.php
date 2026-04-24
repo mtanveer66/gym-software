@@ -47,17 +47,23 @@ try {
         exit;
     }
     
-    $memberId = $data['member_id'] ?? null;
-    $gender = $data['gender'] ?? 'men';
-    $amount = $data['amount'] ?? null;
-    $isDefaulterUpdate = $data['is_defaulter_update'] ?? false;
+    $memberId = filter_var($data['member_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $gender = in_array($data['gender'] ?? 'men', ['men', 'women'], true) ? $data['gender'] : 'men';
+    $amount = isset($data['amount']) && is_numeric($data['amount']) ? round((float)$data['amount'], 2) : null;
+    $isDefaulterUpdate = filter_var($data['is_defaulter_update'] ?? false, FILTER_VALIDATE_BOOLEAN);
     $newDefaulterDate = $data['new_defaulter_date'] ?? null;
-    $isPartialPayment = $data['is_partial_payment'] ?? false;
-    $dueAmount = $data['due_amount'] ?? 0.00;
+    $isPartialPayment = filter_var($data['is_partial_payment'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    $dueAmount = isset($data['due_amount']) && is_numeric($data['due_amount']) ? round((float)$data['due_amount'], 2) : 0.00;
     
-    if (!$memberId || !$amount) {
+    if (!$memberId || $amount === null) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'Member ID and amount are required']);
+        exit;
+    }
+
+    if ($amount <= 0) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Amount must be greater than zero']);
         exit;
     }
     
@@ -65,6 +71,15 @@ try {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'Due amount must be greater than 0 for partial payment']);
         exit;
+    }
+
+    if ($isDefaulterUpdate) {
+        $parsedDefaulterDate = DateTime::createFromFormat('Y-m-d', (string)$newDefaulterDate);
+        if (!$parsedDefaulterDate || $parsedDefaulterDate->format('Y-m-d') !== $newDefaulterDate) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'A valid new defaulter date is required']);
+            exit;
+        }
     }
     
     $database = new Database();
@@ -80,27 +95,17 @@ try {
     }
     
     // Calculate next fee due date
-    $nextFeeDueDate = null;
-    
     if ($isDefaulterUpdate && $newDefaulterDate) {
-        // Use the new defaulter date provided
         $nextFeeDueDate = $newDefaulterDate;
     } else {
-        // Calculate based on join date (normal update)
         $joinDate = new DateTime($memberData['join_date']);
         $today = new DateTime();
-        
-        // Calculate months since join date
-        $monthsSinceJoin = ($today->format('Y') - $joinDate->format('Y')) * 12 + 
-                          ($today->format('m') - $joinDate->format('m'));
-        
-        // Next fee due date is based on join date + months
+        $monthsSinceJoin = ($today->format('Y') - $joinDate->format('Y')) * 12 + (($today->format('m') - $joinDate->format('m')));
         $nextFeeDueDateObj = clone $joinDate;
         $nextFeeDueDateObj->modify('+' . ($monthsSinceJoin + 1) . ' months');
         $nextFeeDueDate = $nextFeeDueDateObj->format('Y-m-d');
     }
     
-    // Get current due amount and monthly fee
     $currentDueQuery = "SELECT total_due_amount, monthly_fee FROM members_{$gender} WHERE id = :id";
     $currentDueStmt = $db->prepare($currentDueQuery);
     $currentDueStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
@@ -113,45 +118,31 @@ try {
         exit;
     }
     
-    $currentDueAmount = floatval($currentMemberData['total_due_amount'] ?? 0.00);
-    $monthlyFee = floatval($currentMemberData['monthly_fee'] ?? 0.00);
-    
-    // Calculate total owed: previous due + new monthly fee
-    $totalOwed = $currentDueAmount + $monthlyFee;
-    
-    // Determine if this is a full payment (covers everything) or partial
-    // Use a small tolerance (0.01) for floating point comparison
+    $currentDueAmount = round((float)($currentMemberData['total_due_amount'] ?? 0.00), 2);
+    $monthlyFee = round((float)($currentMemberData['monthly_fee'] ?? 0.00), 2);
+    $totalOwed = round($currentDueAmount + $monthlyFee, 2);
     $isFullPayment = ($amount >= ($totalOwed - 0.01));
     
     if ($isPartialPayment) {
-        // For explicit partial payment: add the remaining due amount to existing dues
-        // Payment amount + remaining due = what was owed
-        $newTotalDue = $currentDueAmount + $dueAmount;
-        $remainingAmount = $dueAmount;
+        $newTotalDue = max(0, $dueAmount);
+        $remainingAmount = $newTotalDue;
         $paymentStatus = 'pending';
-        $actualPaymentAmount = $amount; // Use the amount entered
-    } else if ($isFullPayment) {
-        // For full payment: payment covers previous due + monthly fee
-        // The payment amount should include both previous due and monthly fee
-        $actualPaymentAmount = $amount; // This should be >= totalOwed
-        $newTotalDue = 0.00; // Everything is paid
+        $actualPaymentAmount = $amount;
+    } elseif ($isFullPayment) {
+        $actualPaymentAmount = $amount;
+        $newTotalDue = 0.00;
         $remainingAmount = 0.00;
         $paymentStatus = 'completed';
     } else {
-        // Partial payment (amount < totalOwed but not marked as partial)
-        // This means they're paying part of what's owed
-        // Calculate remaining: total owed - payment made
         $actualPaymentAmount = $amount;
-        $newTotalDue = max(0, $totalOwed - $amount); // Remaining after payment
+        $newTotalDue = max(0, round($totalOwed - $amount, 2));
         $remainingAmount = $newTotalDue;
         $paymentStatus = 'pending';
     }
-    
-    // Record payment - the payment amount includes previous due + monthly fee if full payment
+
     $payment = new Payment($db, $gender);
-    $totalDueAmount = $isPartialPayment ? ($amount + $dueAmount) : $totalOwed;
+    $totalDueAmount = $totalOwed;
     
-    // Generate unique invoice number
     $invoiceNumber = '';
     $maxAttempts = 10;
     $attempt = 0;
@@ -160,17 +151,15 @@ try {
         $random = rand(1000, 9999);
         $invoiceNumber = 'INV-' . $timestamp . '-' . str_pad($memberId, 4, '0', STR_PAD_LEFT) . '-' . $random;
         
-        // Check if invoice number already exists
         $checkInvoiceQuery = "SELECT COUNT(*) as count FROM payments_{$gender} WHERE invoice_number = :invoice";
         $checkInvoiceStmt = $db->prepare($checkInvoiceQuery);
         $checkInvoiceStmt->bindValue(':invoice', $invoiceNumber, PDO::PARAM_STR);
         $checkInvoiceStmt->execute();
-        $exists = $checkInvoiceStmt->fetch(PDO::FETCH_ASSOC)['count'] > 0;
+        $exists = ((int)($checkInvoiceStmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0)) > 0;
         
         $attempt++;
     } while ($exists && $attempt < $maxAttempts);
     
-    // If still duplicate after max attempts, add microtime
     if ($exists) {
         $invoiceNumber = 'INV-' . date('YmdHis') . '-' . str_pad($memberId, 4, '0', STR_PAD_LEFT) . '-' . substr(str_replace('.', '', microtime(true)), -6);
     }
@@ -180,9 +169,9 @@ try {
     
     $paymentData = [
         'member_id' => $memberId,
-        'amount' => $actualPaymentAmount, // Full amount paid (includes previous due if full payment)
+        'amount' => $actualPaymentAmount,
         'remaining_amount' => $remainingAmount,
-        'total_due_amount' => $totalDueAmount, // Total that was due (previous + monthly fee)
+        'total_due_amount' => $totalDueAmount,
         'payment_date' => date('Y-m-d'),
         'due_date' => $nextFeeDueDate,
         'invoice_number' => $invoiceNumber,
@@ -190,92 +179,78 @@ try {
         'received_by' => $receivedBy,
         'payment_method' => $paymentMethod
     ];
-    
-    // Create payment record
-    $paymentId = $payment->create($paymentData);
-    
-    if (!$paymentId) {
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Failed to create payment record. Please check database connection.',
-            'payment_data' => $paymentData
-        ]);
-        exit;
-    }
-    
-    if ($paymentId) {
-        // Update member's next fee due date
-        $member->updateFeeDueDate($memberId, $nextFeeDueDate);
-        
-        // Update member's total due amount - use transaction to ensure consistency
-        $db->beginTransaction();
-        try {
-            $updateDueQuery = "UPDATE members_{$gender} SET total_due_amount = :total_due WHERE id = :id";
-            $updateDueStmt = $db->prepare($updateDueQuery);
-            $updateDueStmt->bindValue(':total_due', $newTotalDue, PDO::PARAM_STR);
-            $updateDueStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
-            $updateResult = $updateDueStmt->execute();
-            
-            if (!$updateResult) {
-                throw new Exception('Failed to update member due amount');
-            }
-            
-            // Verify the update
-            $verifyQuery = "SELECT total_due_amount FROM members_{$gender} WHERE id = :id";
-            $verifyStmt = $db->prepare($verifyQuery);
-            $verifyStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
-            $verifyStmt->execute();
-            $verified = $verifyStmt->fetch(PDO::FETCH_ASSOC);
-            $actualNewDue = floatval($verified['total_due_amount'] ?? 0.00);
-            
-            $db->commit();
-            
-            // Use the verified amount
-            $newTotalDue = $actualNewDue;
 
-            // Mark this member record for re-sync so cloud database gets the updated due amount
-            SyncHelper::markRecordForSync($db, "members_{$gender}", (int)$memberId);
-        
-            // Return success with payment details
-            $message = '';
-            if ($isPartialPayment) {
-                $message = 'Partial payment recorded. Amount due: ' . number_format($dueAmount, 2);
-            } else if ($isFullPayment) {
-                $message = 'Full payment recorded. Previous due (' . number_format($currentDueAmount, 2) . ') + Monthly fee (' . number_format($monthlyFee, 2) . ') = ' . number_format($totalOwed, 2) . ' paid in full.';
-            } else {
-                $message = 'Payment recorded. Remaining due: ' . number_format($newTotalDue, 2);
-            }
-            
-            echo json_encode([
-                'success' => true,
-                'message' => $message,
-                'payment_id' => $paymentId,
-                'payment_date' => $paymentData['payment_date'],
-                'next_fee_due_date' => $nextFeeDueDate,
-                'remaining_amount' => $remainingAmount,
-                'new_total_due' => $newTotalDue,
-                'previous_due' => $currentDueAmount,
-                'monthly_fee' => $monthlyFee,
-                'payment_amount' => $actualPaymentAmount, // Full amount paid (includes previous due)
-                'total_owed' => $totalOwed,
-                'calculation' => [
-                    'current_due' => $currentDueAmount,
-                    'monthly_fee_added' => $monthlyFee,
-                    'total_owed' => $totalOwed,
-                    'payment_made' => $actualPaymentAmount,
-                    'new_due' => $newTotalDue,
-                    'is_full_payment' => $isFullPayment
-                ],
-                'refresh_required' => true // Flag to indicate UI should refresh
-            ]);
-        } catch (Exception $e) {
-            $db->rollBack();
-            throw $e;
+    $db->beginTransaction();
+
+    try {
+        $paymentId = $payment->create($paymentData);
+
+        if (!$paymentId) {
+            throw new Exception('Failed to create payment record. Please check database connection.');
         }
-    } else {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'message' => 'Failed to record payment']);
+
+        if (!$member->updateFeeDueDate($memberId, $nextFeeDueDate)) {
+            throw new Exception('Failed to update next fee due date');
+        }
+
+        $updateDueQuery = "UPDATE members_{$gender} SET total_due_amount = :total_due WHERE id = :id";
+        $updateDueStmt = $db->prepare($updateDueQuery);
+        $updateDueStmt->bindValue(':total_due', $newTotalDue, PDO::PARAM_STR);
+        $updateDueStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
+
+        if (!$updateDueStmt->execute()) {
+            throw new Exception('Failed to update member due amount');
+        }
+
+        $verifyQuery = "SELECT total_due_amount, next_fee_due_date FROM members_{$gender} WHERE id = :id";
+        $verifyStmt = $db->prepare($verifyQuery);
+        $verifyStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
+        $verifyStmt->execute();
+        $verified = $verifyStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $newTotalDue = round((float)($verified['total_due_amount'] ?? $newTotalDue), 2);
+        $nextFeeDueDate = $verified['next_fee_due_date'] ?? $nextFeeDueDate;
+
+        $db->commit();
+
+        SyncHelper::markRecordForSync($db, "members_{$gender}", (int)$memberId);
+        SyncHelper::markRecordForSync($db, "payments_{$gender}", (int)$paymentId);
+
+        $message = '';
+        if ($isPartialPayment) {
+            $message = 'Partial payment recorded. Amount due: ' . number_format($newTotalDue, 2);
+        } elseif ($isFullPayment) {
+            $message = 'Full payment recorded. Previous due (' . number_format($currentDueAmount, 2) . ') + Monthly fee (' . number_format($monthlyFee, 2) . ') = ' . number_format($totalOwed, 2) . ' paid in full.';
+        } else {
+            $message = 'Payment recorded. Remaining due: ' . number_format($newTotalDue, 2);
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'message' => $message,
+            'payment_id' => $paymentId,
+            'payment_date' => $paymentData['payment_date'],
+            'next_fee_due_date' => $nextFeeDueDate,
+            'remaining_amount' => $remainingAmount,
+            'new_total_due' => $newTotalDue,
+            'previous_due' => $currentDueAmount,
+            'monthly_fee' => $monthlyFee,
+            'payment_amount' => $actualPaymentAmount,
+            'total_owed' => $totalOwed,
+            'calculation' => [
+                'current_due' => $currentDueAmount,
+                'monthly_fee_added' => $monthlyFee,
+                'total_owed' => $totalOwed,
+                'payment_made' => $actualPaymentAmount,
+                'new_due' => $newTotalDue,
+                'is_full_payment' => $isFullPayment
+            ],
+            'refresh_required' => true
+        ]);
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
     }
     
 } catch (Exception $e) {

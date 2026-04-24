@@ -158,7 +158,9 @@ try {
             $defaulterStmt->bindValue(':member_id', $member['id'], PDO::PARAM_INT);
             $defaulterStmt->execute();
             $lastPayment = $defaulterStmt->fetch();
-            $lastPaymentDate = $lastPayment['last_payment_date'] ?? $member['join_date'];
+            $memberTable = 'members_' . $gender;
+            $joinDateColumn = resolve_member_date_column($db, $memberTable);
+            $lastPaymentDate = $lastPayment['last_payment_date'] ?? ($member[$joinDateColumn] ?? date('Y-m-d'));
             $daysSincePayment = (strtotime(date('Y-m-d')) - strtotime($lastPaymentDate)) / (60 * 60 * 24);
             $isDefaulter = ($member['status'] === 'active' && $daysSincePayment >= 30);
             

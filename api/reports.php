@@ -6,11 +6,10 @@
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
-require_once __DIR__ . '/../app/models/Payment.php';
+require_once __DIR__ . '/../app/models/Attendance.php';
 
 header('Content-Type: application/json');
 
-// Check authentication
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
@@ -27,165 +26,168 @@ try {
         case 'members':
             $memberMen = new Member($db, 'men');
             $memberWomen = new Member($db, 'women');
-            
+
             $statsMen = $memberMen->getStats();
             $statsWomen = $memberWomen->getStats();
-            
+            $opsMen = $memberMen->getOperationalSnapshot();
+            $opsWomen = $memberWomen->getOperationalSnapshot();
+
             echo json_encode([
                 'success' => true,
                 'data' => [
                     'men' => $statsMen,
-                    'women' => $statsWomen
+                    'women' => $statsWomen,
+                    'operations' => [
+                        'checked_in_now' => ($opsMen['checked_in_now'] ?? 0) + ($opsWomen['checked_in_now'] ?? 0),
+                        'due_today' => ($opsMen['due_today'] ?? 0) + ($opsWomen['due_today'] ?? 0),
+                        'overdue' => ($opsMen['overdue'] ?? 0) + ($opsWomen['overdue'] ?? 0),
+                        'new_this_month' => ($opsMen['new_this_month'] ?? 0) + ($opsWomen['new_this_month'] ?? 0),
+                        'active_due_amount' => ($opsMen['total_active_due'] ?? 0) + ($opsWomen['total_active_due'] ?? 0)
+                    ]
                 ]
             ]);
             break;
-            
+
         case 'defaulters':
-            // Get defaulters from both genders
-            // Defaulters are: members with overdue due date OR members with outstanding dues
-            $today = date('Y-m-d');
-            
-            // Men defaulters - include those with overdue date OR outstanding dues
-            $queryMen = "SELECT * FROM members_men 
-                        WHERE status = 'active'
-                        AND (
-                            (next_fee_due_date IS NOT NULL AND next_fee_due_date < :today1)
-                            OR (total_due_amount IS NOT NULL AND total_due_amount > 0)
-                        )
-                        ORDER BY 
-                            CASE 
-                                WHEN next_fee_due_date < :today2 THEN 0 
-                                ELSE 1 
-                            END,
-                            next_fee_due_date ASC,
-                            total_due_amount DESC";
-            $stmtMen = $db->prepare($queryMen);
-            $stmtMen->bindValue(':today1', $today, PDO::PARAM_STR);
-            $stmtMen->bindValue(':today2', $today, PDO::PARAM_STR);
-            $stmtMen->execute();
-            $defaultersMen = $stmtMen->fetchAll();
-            
-            // Women defaulters - include those with overdue date OR outstanding dues
-            $queryWomen = "SELECT * FROM members_women 
-                          WHERE status = 'active'
-                          AND (
-                              (next_fee_due_date IS NOT NULL AND next_fee_due_date < :today1)
-                              OR (total_due_amount IS NOT NULL AND total_due_amount > 0)
-                          )
-                          ORDER BY 
-                              CASE 
-                                  WHEN next_fee_due_date < :today2 THEN 0 
-                                  ELSE 1 
-                              END,
-                              next_fee_due_date ASC,
-                              total_due_amount DESC";
-            $stmtWomen = $db->prepare($queryWomen);
-            $stmtWomen->bindValue(':today1', $today, PDO::PARAM_STR);
-            $stmtWomen->bindValue(':today2', $today, PDO::PARAM_STR);
-            $stmtWomen->execute();
-            $defaultersWomen = $stmtWomen->fetchAll();
-            
-            // Combine and sort
-            $allDefaulters = array_merge($defaultersMen, $defaultersWomen);
-            usort($allDefaulters, function($a, $b) {
-                // First sort by overdue status
-                $aOverdue = ($a['next_fee_due_date'] && strtotime($a['next_fee_due_date']) < time()) ? 0 : 1;
-                $bOverdue = ($b['next_fee_due_date'] && strtotime($b['next_fee_due_date']) < time()) ? 0 : 1;
-                if ($aOverdue !== $bOverdue) {
-                    return $aOverdue - $bOverdue;
-                }
-                // Then by due date
-                if ($a['next_fee_due_date'] && $b['next_fee_due_date']) {
-                    $dateDiff = strtotime($a['next_fee_due_date']) - strtotime($b['next_fee_due_date']);
-                    if ($dateDiff !== 0) return $dateDiff;
-                }
-                // Finally by due amount (highest first)
-                $aDue = floatval($a['total_due_amount'] ?? 0);
-                $bDue = floatval($b['total_due_amount'] ?? 0);
-                return $bDue <=> $aDue;
-            });
-            
-            echo json_encode([
-                'success' => true,
-                'data' => [
-                    'defaulters' => $allDefaulters,
-                    'total_count' => count($allDefaulters),
-                    'overdue_count' => count(array_filter($allDefaulters, function($m) use ($today) {
-                        return $m['next_fee_due_date'] && strtotime($m['next_fee_due_date']) < strtotime($today);
-                    })),
-                    'outstanding_dues_count' => count(array_filter($allDefaulters, function($m) {
-                        return floatval($m['total_due_amount'] ?? 0) > 0;
-                    }))
-                ]
-            ]);
-            break;
-            
-        case 'payments':
-            // Get payment statistics from both genders
-            $query = "SELECT 
-                        COUNT(*) as total_payments,
-                        SUM(amount) as total_revenue,
-                        AVG(amount) as avg_payment
-                     FROM (
-                         SELECT amount FROM payments_men WHERE status = 'completed'
-                         UNION ALL
-                         SELECT amount FROM payments_women WHERE status = 'completed'
-                     ) as all_payments";
+            $memberSources = [
+                ['table' => 'members_men', 'gender' => 'men'],
+                ['table' => 'members_women', 'gender' => 'women']
+            ];
+
+            $unionParts = [];
+            foreach ($memberSources as $source) {
+                $dateColumn = resolve_member_date_column($db, $source['table']);
+                $unionParts[] = "SELECT id, member_code, name, phone, status, total_due_amount, next_fee_due_date, {$dateColumn} AS join_date, '{$source['gender']}' AS gender
+                                 FROM {$source['table']}
+                                 WHERE status = 'active'
+                                   AND ((next_fee_due_date IS NOT NULL AND next_fee_due_date < CURDATE())
+                                        OR COALESCE(total_due_amount, 0) > 0)";
+            }
+
+            $query = "SELECT * FROM (" . implode(' UNION ALL ', $unionParts) . ") d
+                      ORDER BY (next_fee_due_date IS NULL) ASC, next_fee_due_date ASC, total_due_amount DESC, name ASC";
             $stmt = $db->prepare($query);
             $stmt->execute();
-            $stats = $stmt->fetch();
-            
-            echo json_encode([
-                'success' => true,
-                'data' => $stats
-            ]);
-            break;
-            
-        case 'attendance':
-            // Get attendance statistics
-            $today = date('Y-m-d');
-            
-            // Today's attendance
-            $queryToday = "SELECT COUNT(*) as today_count FROM (
-                SELECT id FROM attendance_men WHERE DATE(check_in) = :today
-                UNION ALL
-                SELECT id FROM attendance_women WHERE DATE(check_in) = :today
-            ) as today_attendance";
-            $stmtToday = $db->prepare($queryToday);
-            $stmtToday->bindValue(':today', $today, PDO::PARAM_STR);
-            $stmtToday->execute();
-            $todayStats = $stmtToday->fetch();
-            
-            // This month's attendance
-            $monthStart = date('Y-m-01');
-            $queryMonth = "SELECT COUNT(*) as month_count FROM (
-                SELECT id FROM attendance_men WHERE DATE(check_in) >= :month_start
-                UNION ALL
-                SELECT id FROM attendance_women WHERE DATE(check_in) >= :month_start
-            ) as month_attendance";
-            $stmtMonth = $db->prepare($queryMonth);
-            $stmtMonth->bindValue(':month_start', $monthStart, PDO::PARAM_STR);
-            $stmtMonth->execute();
-            $monthStats = $stmtMonth->fetch();
-            
+            $defaulters = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $todayTs = strtotime(date('Y-m-d'));
+            $overdueCount = 0;
+            $outstandingDuesCount = 0;
+            $totalOutstanding = 0.0;
+
+            foreach ($defaulters as &$defaulter) {
+                $dueAmount = (float)($defaulter['total_due_amount'] ?? 0);
+                $defaulter['total_due_amount'] = $dueAmount;
+                $totalOutstanding += $dueAmount;
+                if ($dueAmount > 0) {
+                    $outstandingDuesCount++;
+                }
+
+                $daysOverdue = 0;
+                if (!empty($defaulter['next_fee_due_date'])) {
+                    $dueTs = strtotime($defaulter['next_fee_due_date']);
+                    if ($dueTs !== false && $dueTs < $todayTs) {
+                        $daysOverdue = (int)floor(($todayTs - $dueTs) / 86400);
+                        $overdueCount++;
+                    }
+                }
+                $defaulter['days_overdue'] = $daysOverdue;
+            }
+            unset($defaulter);
+
             echo json_encode([
                 'success' => true,
                 'data' => [
-                    'today' => $todayStats['today_count'],
-                    'this_month' => $monthStats['month_count']
+                    'defaulters' => $defaulters,
+                    'total_count' => count($defaulters),
+                    'overdue_count' => $overdueCount,
+                    'outstanding_dues_count' => $outstandingDuesCount,
+                    'total_outstanding_amount' => $totalOutstanding
                 ]
             ]);
             break;
-            
+
+        case 'payments':
+            $monthStart = date('Y-m-01');
+            $monthEnd = date('Y-m-t');
+
+            $query = "SELECT
+                        COUNT(*) as total_payments,
+                        COALESCE(SUM(amount), 0) as total_revenue,
+                        COALESCE(AVG(amount), 0) as avg_payment,
+                        SUM(CASE WHEN payment_date = CURDATE() THEN amount ELSE 0 END) as revenue_today,
+                        SUM(CASE WHEN payment_date BETWEEN :month_start AND :month_end THEN amount ELSE 0 END) as revenue_this_month,
+                        SUM(CASE WHEN payment_date = CURDATE() THEN 1 ELSE 0 END) as payments_today,
+                        SUM(CASE WHEN payment_date BETWEEN :month_start AND :month_end THEN 1 ELSE 0 END) as payments_this_month,
+                        SUM(CASE WHEN status = 'pending' THEN COALESCE(remaining_amount, 0) ELSE 0 END) as pending_remaining_amount
+                     FROM (
+                         SELECT amount, payment_date, status, remaining_amount FROM payments_men
+                         UNION ALL
+                         SELECT amount, payment_date, status, remaining_amount FROM payments_women
+                     ) all_payments";
+            $stmt = $db->prepare($query);
+            $stmt->bindValue(':month_start', $monthStart, PDO::PARAM_STR);
+            $stmt->bindValue(':month_end', $monthEnd, PDO::PARAM_STR);
+            $stmt->execute();
+            $stats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'total_payments' => (int)($stats['total_payments'] ?? 0),
+                    'total_revenue' => (float)($stats['total_revenue'] ?? 0),
+                    'avg_payment' => (float)($stats['avg_payment'] ?? 0),
+                    'revenue_today' => (float)($stats['revenue_today'] ?? 0),
+                    'revenue_this_month' => (float)($stats['revenue_this_month'] ?? 0),
+                    'payments_today' => (int)($stats['payments_today'] ?? 0),
+                    'payments_this_month' => (int)($stats['payments_this_month'] ?? 0),
+                    'pending_remaining_amount' => (float)($stats['pending_remaining_amount'] ?? 0)
+                ]
+            ]);
+            break;
+
+        case 'attendance':
+            $attendanceMen = new Attendance($db, 'men');
+            $attendanceWomen = new Attendance($db, 'women');
+            $todayMen = $attendanceMen->getTodaySummary();
+            $todayWomen = $attendanceWomen->getTodaySummary();
+
+            $monthStart = date('Y-m-01');
+            $monthQuery = "SELECT
+                                COUNT(*) as month_count,
+                                COUNT(DISTINCT member_key) as unique_members_this_month
+                           FROM (
+                                SELECT CONCAT('men-', member_id) as member_key, check_in FROM attendance_men WHERE DATE(check_in) >= :month_start_1
+                                UNION ALL
+                                SELECT CONCAT('women-', member_id) as member_key, check_in FROM attendance_women WHERE DATE(check_in) >= :month_start_2
+                           ) attendance_union";
+            $monthStmt = $db->prepare($monthQuery);
+            $monthStmt->bindValue(':month_start_1', $monthStart, PDO::PARAM_STR);
+            $monthStmt->bindValue(':month_start_2', $monthStart, PDO::PARAM_STR);
+            $monthStmt->execute();
+            $monthStats = $monthStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'today' => ($todayMen['total_visits'] ?? 0) + ($todayWomen['total_visits'] ?? 0),
+                    'today_unique_members' => ($todayMen['unique_members'] ?? 0) + ($todayWomen['unique_members'] ?? 0),
+                    'active_sessions' => ($todayMen['active_sessions'] ?? 0) + ($todayWomen['active_sessions'] ?? 0),
+                    'this_month' => (int)($monthStats['month_count'] ?? 0),
+                    'unique_members_this_month' => (int)($monthStats['unique_members_this_month'] ?? 0)
+                ]
+            ]);
+            break;
+
         default:
             http_response_code(404);
             echo json_encode(['success' => false, 'message' => 'Invalid report type']);
     }
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    error_log('Reports API error: ' . $e->getMessage());
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Server error: ' . $e->getMessage()
+        'message' => 'An unexpected server error occurred.'
     ]);
 }
-

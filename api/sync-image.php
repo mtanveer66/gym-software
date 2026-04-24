@@ -9,9 +9,15 @@ require_once __DIR__ . '/../config/database-online.php';
 
 header('Content-Type: application/json');
 
-// Simple API key authentication
+// Sync API key authentication
 $apiKey = $_GET['api_key'] ?? $_POST['api_key'] ?? '';
-$expectedApiKey = 'gym_sync_key_2024_secure';
+$expectedApiKey = (string)env('SYNC_API_KEY', '');
+
+if ($expectedApiKey === '') {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'SYNC_API_KEY is not configured on the server']);
+    exit;
+}
 
 if ($apiKey !== $expectedApiKey) {
     http_response_code(401);

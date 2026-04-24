@@ -3,174 +3,128 @@
  * Get Due Fees API - Get all members with due fees
  */
 
-// Start output buffering to prevent any accidental output
 ob_start();
 
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
-require_once __DIR__ . '/../app/models/Member.php';
 
-// Clear any output that might have been generated
 ob_clean();
 
 header('Content-Type: application/json');
 
-// Check authentication
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
 
-$method = $_SERVER['REQUEST_METHOD'];
-
-if ($method !== 'GET') {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
     http_response_code(405);
     echo json_encode(['success' => false, 'message' => 'Method not allowed']);
     exit;
 }
 
 try {
-    $gender = $_GET['gender'] ?? 'all'; // 'men', 'women', or 'all'
-    $search = $_GET['search'] ?? '';
-    $page = intval($_GET['page'] ?? 1);
-    $limit = intval($_GET['limit'] ?? 50);
+    $gender = $_GET['gender'] ?? 'all';
+    $gender = in_array($gender, ['all', 'men', 'women'], true) ? $gender : 'all';
+    $search = trim((string)($_GET['search'] ?? ''));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $limit = max(1, min(100, (int)($_GET['limit'] ?? 50)));
     $offset = ($page - 1) * $limit;
-    
+
     $database = new Database();
     $db = $database->getConnection();
-    
-    // Check if column exists
-    $checkColumnQuery = "SELECT COUNT(*) as col_count FROM INFORMATION_SCHEMA.COLUMNS 
-                        WHERE TABLE_SCHEMA = DATABASE() 
-                        AND TABLE_NAME = 'members_men' 
-                        AND COLUMN_NAME = 'total_due_amount'";
-    $checkStmt = $db->prepare($checkColumnQuery);
-    $checkStmt->execute();
-    $columnExists = $checkStmt->fetch()['col_count'] > 0;
-    
-    if (!$columnExists) {
-        http_response_code(500);
+
+    $tables = [];
+    if ($gender === 'all' || $gender === 'men') {
+        $tables[] = ['table' => 'members_men', 'gender' => 'men'];
+    }
+    if ($gender === 'all' || $gender === 'women') {
+        $tables[] = ['table' => 'members_women', 'gender' => 'women'];
+    }
+
+    $unionParts = [];
+    foreach ($tables as $entry) {
+        $tableName = $entry['table'];
+        $resolvedDateColumn = resolve_member_date_column($db, $tableName);
+        $unionParts[] = "SELECT id, member_code, name, phone, total_due_amount, next_fee_due_date, status, '{$entry['gender']}' AS gender, {$resolvedDateColumn} AS join_date, created_at
+                         FROM {$tableName}
+                         WHERE COALESCE(total_due_amount, 0) > 0 AND status = 'active'";
+    }
+
+    if (empty($unionParts)) {
         echo json_encode([
-            'success' => false,
-            'message' => 'Database column "total_due_amount" does not exist. Please run the migration script: database/add_due_amount_simple.sql in phpMyAdmin first.',
-            'error_code' => 'MISSING_COLUMN',
+            'success' => true,
             'data' => [],
             'pagination' => ['page' => 1, 'limit' => $limit, 'total' => 0, 'total_pages' => 0],
-            'summary' => ['total_members_with_due' => 0, 'total_due_amount' => 0]
+            'summary' => ['total_members_with_due' => 0, 'total_due_amount' => 0, 'overdue_members' => 0, 'due_today' => 0]
         ]);
         exit;
     }
-    
-    $allDueFees = [];
-    
-    // Get due fees from men
-    if ($gender === 'all' || $gender === 'men') {
-        // FILTER: Only Active Members
-        $whereClause = "WHERE total_due_amount > 0 AND status = 'active'";
-        if (!empty($search)) {
-            $whereClause .= " AND (member_code LIKE :search OR name LIKE :search OR phone LIKE :search)";
-        }
-        
-        $query = "SELECT *, 'men' as gender FROM members_men {$whereClause} ORDER BY total_due_amount DESC, next_fee_due_date ASC, created_at DESC LIMIT :limit OFFSET :offset";
-        $stmt = $db->prepare($query);
-        
-        if (!empty($search)) {
-            $searchParam = '%' . $search . '%';
-            $stmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
-        }
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-        $menDueFees = $stmt->fetchAll();
-        
-        $allDueFees = array_merge($allDueFees, $menDueFees);
+
+    $baseQuery = implode(' UNION ALL ', $unionParts);
+    $filters = [];
+    $params = [];
+
+    if ($search !== '') {
+        $filters[] = '(member_code LIKE :search OR name LIKE :search OR phone LIKE :search)';
+        $params[':search'] = '%' . $search . '%';
     }
-    
-    // Get due fees from women
-    if ($gender === 'all' || $gender === 'women') {
-        // FILTER: Only Active Members
-        $whereClause = "WHERE total_due_amount > 0 AND status = 'active'";
-        if (!empty($search)) {
-            $whereClause .= " AND (member_code LIKE :search OR name LIKE :search OR phone LIKE :search)";
-        }
-        
-        $query = "SELECT *, 'women' as gender FROM members_women {$whereClause} ORDER BY total_due_amount DESC, next_fee_due_date ASC, created_at DESC LIMIT :limit OFFSET :offset";
-        $stmt = $db->prepare($query);
-        
-        if (!empty($search)) {
-            $searchParam = '%' . $search . '%';
-            $stmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
-        }
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-        $womenDueFees = $stmt->fetchAll();
-        
-        $allDueFees = array_merge($allDueFees, $womenDueFees);
+
+    $whereClause = !empty($filters) ? 'WHERE ' . implode(' AND ', $filters) : '';
+
+    $pagedQuery = "SELECT *
+                   FROM ({$baseQuery}) due_members
+                   {$whereClause}
+                   ORDER BY total_due_amount DESC, next_fee_due_date IS NULL ASC, next_fee_due_date ASC, created_at DESC
+                   LIMIT :limit OFFSET :offset";
+    $stmt = $db->prepare($pagedQuery);
+    foreach ($params as $key => $value) {
+        $stmt->bindValue($key, $value, PDO::PARAM_STR);
     }
-    
-    // Sort by due amount descending
-    usort($allDueFees, function($a, $b) {
-        return floatval($b['total_due_amount']) <=> floatval($a['total_due_amount']);
-    });
-    
-    // Get total count
-    $countQueryMen = "SELECT COUNT(*) as total FROM members_men WHERE total_due_amount > 0 AND status = 'active'";
-    $countQueryWomen = "SELECT COUNT(*) as total FROM members_women WHERE total_due_amount > 0 AND status = 'active'";
-    
-    $totalMen = 0;
-    $totalWomen = 0;
-    
-    if ($gender === 'all' || $gender === 'men') {
-        $countStmt = $db->prepare($countQueryMen);
-        $countStmt->execute();
-        $totalMen = $countStmt->fetch()['total'];
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $summaryQuery = "SELECT
+                        COUNT(*) as total_members_with_due,
+                        COALESCE(SUM(total_due_amount), 0) as total_due_amount,
+                        SUM(CASE WHEN next_fee_due_date IS NOT NULL AND next_fee_due_date < CURDATE() THEN 1 ELSE 0 END) as overdue_members,
+                        SUM(CASE WHEN next_fee_due_date = CURDATE() THEN 1 ELSE 0 END) as due_today
+                     FROM ({$baseQuery}) due_members
+                     {$whereClause}";
+    $summaryStmt = $db->prepare($summaryQuery);
+    foreach ($params as $key => $value) {
+        $summaryStmt->bindValue($key, $value, PDO::PARAM_STR);
     }
-    
-    if ($gender === 'all' || $gender === 'women') {
-        $countStmt = $db->prepare($countQueryWomen);
-        $countStmt->execute();
-        $totalWomen = $countStmt->fetch()['total'];
-    }
-    
-    $total = $totalMen + $totalWomen;
-    
-    // Calculate total due amount
-    $totalDueAmount = 0;
-    foreach ($allDueFees as $member) {
-        $totalDueAmount += floatval($member['total_due_amount']);
-    }
-    
+    $summaryStmt->execute();
+    $summary = $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $total = (int)($summary['total_members_with_due'] ?? 0);
+
     echo json_encode([
         'success' => true,
-        'data' => $allDueFees,
+        'data' => $rows,
         'pagination' => [
             'page' => $page,
             'limit' => $limit,
             'total' => $total,
-            'total_pages' => ceil($total / $limit)
+            'total_pages' => (int)ceil($total / $limit)
         ],
         'summary' => [
             'total_members_with_due' => $total,
-            'total_due_amount' => $totalDueAmount
+            'total_due_amount' => (float)($summary['total_due_amount'] ?? 0),
+            'overdue_members' => (int)($summary['overdue_members'] ?? 0),
+            'due_today' => (int)($summary['due_today'] ?? 0)
         ]
     ]);
-    
-} catch (Exception $e) {
-    // Clear any output that might have been generated
+} catch (Throwable $e) {
     ob_clean();
+    error_log('Get Due Fees API error: ' . $e->getMessage());
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Server error: ' . $e->getMessage()
-    ]);
-} catch (Error $e) {
-    // Handle fatal errors (PHP 7+)
-    ob_clean();
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'message' => 'Fatal error: ' . $e->getMessage()
+        'message' => 'An unexpected server error occurred.'
     ]);
 }

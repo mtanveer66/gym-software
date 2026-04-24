@@ -30,6 +30,8 @@ try {
         $memberTable = 'members_' . $gender;
         $attendanceTable = 'attendance_' . $gender;
         
+        $joinDateColumn = resolve_member_date_column($db, $memberTable);
+
         // Get all active members
         $query = "SELECT * FROM {$memberTable} WHERE status = 'active'";
         $stmt = $db->prepare($query);
@@ -47,8 +49,11 @@ try {
                 $attendanceStmt->execute();
                 $lastAttendance = $attendanceStmt->fetch();
 
-                // Use join date if no attendance was ever recorded
-                $referenceDate = $lastAttendance['last_attendance'] ?? $memberData['join_date'];
+                // Use join/admission date if no attendance was ever recorded
+                $referenceDate = $lastAttendance['last_attendance'] ?? ($memberData[$joinDateColumn] ?? null);
+                if (empty($referenceDate)) {
+                    throw new Exception('Missing reference date for inactivity calculation');
+                }
                 $referenceDateTime = new DateTime($referenceDate);
                 $currentDateTime = new DateTime();
 

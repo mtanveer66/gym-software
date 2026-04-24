@@ -68,14 +68,15 @@ class CronHelper {
         foreach ($tables as $gender) {
             $memberTable = "members_{$gender}";
             $paymentTable = "payments_{$gender}";
+            $joinDateColumn = resolve_member_date_column($this->db, $memberTable);
             
-            // Logic: Active members with no payment (or join date) > 60 days
+            // Logic: Active members with no payment (or join/admission date) > 60 days
             $query = "SELECT m.id 
                       FROM {$memberTable} m
                       LEFT JOIN {$paymentTable} p ON m.id = p.member_id
                       WHERE m.status = 'active'
                       GROUP BY m.id
-                      HAVING DATEDIFF(CURDATE(), COALESCE(MAX(p.payment_date), m.join_date)) > 60";
+                      HAVING DATEDIFF(CURDATE(), COALESCE(MAX(p.payment_date), m.{$joinDateColumn})) > 60";
             
             $stmt = $this->db->prepare($query);
             $stmt->execute();

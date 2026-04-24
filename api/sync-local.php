@@ -25,9 +25,21 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     exit;
 }
 
-// Online server URL - UPDATE THIS WITH YOUR ONLINE SERVER URL
-$onlineServerUrl = 'https://chocolate-wasp-405221.hostingersite.com'; // Change to your online server URL
-$apiKey = 'gym_sync_key_2024_secure'; // Must match the key in sync.php
+// Sync target configuration
+$onlineServerUrl = rtrim((string)env('ONLINE_SERVER_URL', ''), '/');
+$apiKey = (string)env('SYNC_API_KEY', '');
+
+if ($onlineServerUrl === '') {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'ONLINE_SERVER_URL is not configured']);
+    exit;
+}
+
+if ($apiKey === '') {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'SYNC_API_KEY is not configured']);
+    exit;
+}
 
 try {
     $database = new Database();
@@ -268,12 +280,13 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
         
         error_log("Processing chunk {$chunkNumber}/{$totalChunks} for {$tableName} (records " . ($offset + 1) . " - " . ($offset + $chunkRecordCount) . ")");
         
-        // For payments, add member_code to each record for better matching
-        if (strpos($tableName, 'payments_') === 0) {
-            $gender = str_replace('payments_', '', $tableName);
+        // For payments and attendance, add member_code to each record for reliable cross-database matching
+        if (strpos($tableName, 'payments_') === 0 || strpos($tableName, 'attendance_') === 0) {
+            $gender = str_replace(['payments_', 'attendance_'], '', $tableName);
             $memberTable = 'members_' . $gender;
-            $paymentsWithCode = 0;
-            $paymentsWithoutCode = 0;
+            $recordsWithCode = 0;
+            $recordsWithoutCode = 0;
+            $recordLabel = strpos($tableName, 'payments_') === 0 ? 'payment' : 'attendance';
             
             foreach ($records as &$record) {
                 if (isset($record['member_id']) && $record['member_id'] > 0) {
@@ -285,23 +298,22 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
                         $member = $memberStmt->fetch();
                         if ($member && isset($member['member_code']) && !empty($member['member_code'])) {
                             $record['member_code'] = $member['member_code'];
-                            $paymentsWithCode++;
+                            $recordsWithCode++;
                         } else {
-                            // Log warning but continue - member_code will be missing
-                            error_log("Warning: Could not find member_code for payment ID " . ($record['id'] ?? 'N/A') . " with member_id: {$record['member_id']}");
-                            $paymentsWithoutCode++;
+                            error_log("Warning: Could not find member_code for {$recordLabel} ID " . ($record['id'] ?? 'N/A') . " with member_id: {$record['member_id']}");
+                            $recordsWithoutCode++;
                         }
                     } catch (Exception $e) {
-                        error_log("Error fetching member_code for payment ID " . ($record['id'] ?? 'N/A') . ": " . $e->getMessage());
-                        $paymentsWithoutCode++;
+                        error_log("Error fetching member_code for {$recordLabel} ID " . ($record['id'] ?? 'N/A') . ": " . $e->getMessage());
+                        $recordsWithoutCode++;
                     }
                 } else {
-                    error_log("Warning: Payment record ID " . ($record['id'] ?? 'N/A') . " has invalid member_id: " . ($record['member_id'] ?? 'NULL'));
-                    $paymentsWithoutCode++;
+                    error_log("Warning: {$recordLabel} record ID " . ($record['id'] ?? 'N/A') . " has invalid member_id: " . ($record['member_id'] ?? 'NULL'));
+                    $recordsWithoutCode++;
                 }
             }
-            unset($record); // Unset reference
-            error_log("Chunk {$chunkNumber}: Payment member_code lookup - {$paymentsWithCode} with code, {$paymentsWithoutCode} without code");
+            unset($record);
+            error_log("Chunk {$chunkNumber}: " . ucfirst($recordLabel) . " member_code lookup - {$recordsWithCode} with code, {$recordsWithoutCode} without code");
         }
         
         // Prepare data for sync
@@ -368,6 +380,7 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
         $synced = $result['synced'] ?? 0;
         $failed = $result['failed'] ?? 0;
         $errors = $result['errors'] ?? [];
+        $recordResults = is_array($result['record_results'] ?? null) ? $result['record_results'] : [];
         
         error_log("Chunk {$chunkNumber}/{$totalChunks} result: {$synced} synced, {$failed} failed");
         if (!empty($errors) && count($errors) > 0) {
@@ -379,13 +392,40 @@ function syncTable($db, $tableName, $tableType, $onlineServerUrl, $apiKey, $forc
         $totalFailed += $failed;
         $allErrors = array_merge($allErrors, $errors);
         
-        // Mark all sent records as synced (server will handle duplicates/updates)
-        // Only if sync_log table exists
+        // Update sync_log conservatively: only mark records as synced when the remote endpoint
+        // explicitly confirms them, otherwise keep or mark them failed for retry.
         try {
             $testQuery = "SELECT 1 FROM sync_log LIMIT 1";
             $db->query($testQuery);
+
+            $resultMap = [];
+            foreach ($recordResults as $recordResult) {
+                if (isset($recordResult['record_id'])) {
+                    $resultMap[(string)$recordResult['record_id']] = $recordResult;
+                }
+            }
+
             foreach ($records as $record) {
-                updateSyncLog($db, $tableName, $record['id'], 'synced', null);
+                $localRecordId = isset($record['id']) ? (int)$record['id'] : 0;
+                if ($localRecordId <= 0) {
+                    continue;
+                }
+
+                $recordResult = $resultMap[(string)$localRecordId] ?? null;
+
+                if ($recordResult !== null) {
+                    $status = ($recordResult['status'] ?? '') === 'synced' ? 'synced' : 'failed';
+                    $error = $status === 'failed' ? ($recordResult['error'] ?? 'Remote sync failed for this record') : null;
+                    updateSyncLog($db, $tableName, $localRecordId, $status, $error);
+                    continue;
+                }
+
+                if (empty($recordResults) && $failed === 0) {
+                    updateSyncLog($db, $tableName, $localRecordId, 'synced', null);
+                } else {
+                    $fallbackError = $result['message'] ?? 'Remote sync did not confirm this record';
+                    updateSyncLog($db, $tableName, $localRecordId, 'failed', $fallbackError);
+                }
             }
         } catch (PDOException $e) {
             // sync_log table doesn't exist, skip logging

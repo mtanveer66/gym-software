@@ -1,20 +1,21 @@
 <?php
 /**
  * Online Database Configuration
- * Always connects to the online database (used by sync.php on online server)
+ * Uses dedicated online DB env vars with safe fallbacks.
  */
 
 class DatabaseOnline {
-    // Online Server Configuration
-    private $host = 'localhost';
-    private $db_name = 'u124112239_gym';
-    private $username = 'u124112239_gym';
-    private $password = 'Hadi6666@@';
-    
+    private $host;
+    private $db_name;
+    private $username;
+    private $password;
     private $conn;
 
     public function __construct() {
-        // Always use online database credentials
+        $this->host = env('ONLINE_DB_HOST', env('DB_HOST', 'localhost'));
+        $this->db_name = env('ONLINE_DB_NAME', env('DB_NAME', 'gym_management'));
+        $this->username = env('ONLINE_DB_USERNAME', env('DB_USERNAME', 'root'));
+        $this->password = env('ONLINE_DB_PASSWORD', env('DB_PASSWORD', ''));
     }
 
     public function getConnection() {
@@ -32,7 +33,7 @@ class DatabaseOnline {
                 ]
             );
         } catch(PDOException $exception) {
-            error_log("Connection error: " . $exception->getMessage());
+            error_log("Online DB connection error: " . $exception->getMessage());
             throw new Exception("Database connection failed: " . $exception->getMessage());
         }
 

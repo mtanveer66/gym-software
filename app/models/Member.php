@@ -7,54 +7,103 @@ class Member {
     private $conn;
     private $gender;
     private $table;
+    private $dateColumn;
 
     public function __construct($db, $gender = 'men') {
         $this->conn = $db;
-        $this->gender = in_array($gender, ['men', 'women']) ? $gender : 'men';
+        $this->gender = in_array($gender, ['men', 'women'], true) ? $gender : 'men';
         $this->table = 'members_' . $this->gender;
+        $this->dateColumn = resolve_member_date_column($this->conn, $this->table);
     }
 
-    public function getAll($page = 1, $limit = 20, $search = '', $status = null) {
+    private function normalizePositiveInt($value, int $default, int $max = 500): int {
+        $value = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: $default;
+        return min($value, $max);
+    }
+
+    private function normalizeSortBy(?string $sortBy): string {
+        $allowed = [
+            'created_at' => 'm.created_at',
+            'name' => 'm.name',
+            'member_code' => 'm.member_code',
+            'next_fee_due_date' => 'm.next_fee_due_date',
+            'join_date' => 'm.' . $this->dateColumn,
+            'status' => 'm.status'
+        ];
+
+        return $allowed[$sortBy] ?? 'm.created_at';
+    }
+
+    private function normalizeSortDirection(?string $sortDir): string {
+        return strtoupper((string)$sortDir) === 'ASC' ? 'ASC' : 'DESC';
+    }
+
+    private function baseSelect(): string {
+        return "SELECT m.*, m.{$this->dateColumn} AS join_date FROM {$this->table} m";
+    }
+
+    public function getAll($page = 1, $limit = 20, $search = '', $status = null, array $filters = []) {
+        $page = $this->normalizePositiveInt($page, 1, 100000);
+        $limit = $this->normalizePositiveInt($limit, 20, 100);
         $offset = ($page - 1) * $limit;
+
         $where = [];
         $params = [];
 
-        if (!empty($search)) {
-            $where[] = "(member_code LIKE :search1 OR name LIKE :search2 OR phone LIKE :search3 OR email LIKE :search4)";
-            $searchParam = '%' . $search . '%';
-            $params[':search1'] = $searchParam;
-            $params[':search2'] = $searchParam;
-            $params[':search3'] = $searchParam;
-            $params[':search4'] = $searchParam;
+        $search = trim((string)$search);
+        if ($search !== '') {
+            $where[] = '(m.member_code LIKE :search OR m.name LIKE :search OR m.phone LIKE :search OR m.email LIKE :search OR m.rfid_uid LIKE :search)';
+            $params[':search'] = '%' . $search . '%';
         }
-        
-        if ($status !== null) {
-            $where[] = "status = :status";
+
+        if ($status !== null && in_array($status, ['active', 'inactive'], true)) {
+            $where[] = 'm.status = :status';
             $params[':status'] = $status;
         }
 
-        $whereClause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
-
-        $query = "SELECT * FROM " . $this->table . " " . $whereClause . " ORDER BY created_at DESC LIMIT :limit OFFSET :offset";
-        $stmt = $this->conn->prepare($query);
-        
-        foreach ($params as $key => $value) {
-            $stmt->bindValue($key, $value, PDO::PARAM_STR);
+        $dueStatus = $filters['due_status'] ?? null;
+        if ($dueStatus === 'overdue') {
+            $where[] = 'm.next_fee_due_date IS NOT NULL AND m.next_fee_due_date < CURDATE() AND COALESCE(m.total_due_amount, 0) > 0';
+        } elseif ($dueStatus === 'today') {
+            $where[] = 'm.next_fee_due_date = CURDATE()';
+        } elseif ($dueStatus === 'upcoming') {
+            $days = $this->normalizePositiveInt($filters['due_within_days'] ?? 7, 7, 60);
+            $where[] = 'm.next_fee_due_date IS NOT NULL AND m.next_fee_due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL :due_within_days DAY)';
+            $params[':due_within_days'] = $days;
         }
-        $stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
+
+        if (array_key_exists('checked_in', $filters) && $filters['checked_in'] !== null && $filters['checked_in'] !== '') {
+            $checkedIn = filter_var($filters['checked_in'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($checkedIn !== null) {
+                $where[] = 'm.is_checked_in = :checked_in';
+                $params[':checked_in'] = $checkedIn ? 1 : 0;
+            }
+        }
+
+        $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+        $sortBy = $this->normalizeSortBy($filters['sort_by'] ?? null);
+        $sortDir = $this->normalizeSortDirection($filters['sort_dir'] ?? null);
+
+        $query = $this->baseSelect() . " {$whereClause} ORDER BY {$sortBy} {$sortDir}, m.id DESC LIMIT :limit OFFSET :offset";
+        $stmt = $this->conn->prepare($query);
+
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
         $stmt->execute();
 
-        $countQuery = "SELECT COUNT(*) as total FROM " . $this->table . " " . $whereClause;
+        $countQuery = "SELECT COUNT(*) as total FROM {$this->table} m {$whereClause}";
         $countStmt = $this->conn->prepare($countQuery);
         foreach ($params as $key => $value) {
-            $countStmt->bindValue($key, $value, PDO::PARAM_STR);
+            $countStmt->bindValue($key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
         }
         $countStmt->execute();
-        $total = $countStmt->fetch()['total'];
+        $total = (int)($countStmt->fetch()['total'] ?? 0);
 
         return [
-            'data' => $stmt->fetchAll(),
+            'data' => $stmt->fetchAll(PDO::FETCH_ASSOC),
             'total' => $total,
             'page' => $page,
             'limit' => $limit
@@ -62,19 +111,19 @@ class Member {
     }
 
     public function getByCode($memberCode) {
-        $query = "SELECT * FROM " . $this->table . " WHERE member_code = :member_code LIMIT 1";
+        $query = $this->baseSelect() . ' WHERE m.member_code = :member_code LIMIT 1';
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':member_code', $memberCode, PDO::PARAM_STR);
+        $stmt->bindValue(':member_code', trim((string)$memberCode), PDO::PARAM_STR);
         $stmt->execute();
-        return $stmt->fetch();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
     public function getById($id) {
-        $query = "SELECT * FROM " . $this->table . " WHERE id = :id LIMIT 1";
+        $query = $this->baseSelect() . ' WHERE m.id = :id LIMIT 1';
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
         $stmt->execute();
-        return $stmt->fetch();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
     public function create($data) {
@@ -83,11 +132,11 @@ class Member {
             throw new InvalidArgumentException('Phone number is required.');
         }
 
-        $query = "INSERT INTO " . $this->table . " 
-            (member_code, name, email, phone, rfid_uid, address, profile_image, membership_type, join_date, admission_fee, monthly_fee, locker_fee, next_fee_due_date, total_due_amount, status, is_checked_in) 
-            VALUES 
+        $query = "INSERT INTO {$this->table}
+            (member_code, name, email, phone, rfid_uid, address, profile_image, membership_type, {$this->dateColumn}, admission_fee, monthly_fee, locker_fee, next_fee_due_date, total_due_amount, status, is_checked_in)
+            VALUES
             (:member_code, :name, :email, :phone, :rfid_uid, :address, :profile_image, :membership_type, :join_date, :admission_fee, :monthly_fee, :locker_fee, :next_fee_due_date, :total_due_amount, :status, :is_checked_in)";
-        
+
         $stmt = $this->conn->prepare($query);
         $stmt->bindValue(':member_code', trim((string)($data['member_code'] ?? '')), PDO::PARAM_STR);
         $stmt->bindValue(':name', trim((string)($data['name'] ?? '')), PDO::PARAM_STR);
@@ -104,7 +153,7 @@ class Member {
         $stmt->bindValue(':next_fee_due_date', $data['next_fee_due_date'] ?? null, PDO::PARAM_STR);
         $stmt->bindValue(':total_due_amount', $data['total_due_amount'] ?? 0.00, PDO::PARAM_STR);
         $stmt->bindValue(':status', $data['status'] ?? 'active', PDO::PARAM_STR);
-        $stmt->bindValue(':is_checked_in', $data['is_checked_in'] ?? 0, PDO::PARAM_INT);
+        $stmt->bindValue(':is_checked_in', (int)($data['is_checked_in'] ?? 0), PDO::PARAM_INT);
 
         if ($stmt->execute()) {
             return $this->conn->lastInsertId();
@@ -118,7 +167,7 @@ class Member {
             throw new InvalidArgumentException('Phone number is required.');
         }
 
-        $query = "UPDATE " . $this->table . " SET 
+        $query = "UPDATE {$this->table} SET
             member_code = :member_code,
             name = :name,
             email = :email,
@@ -127,7 +176,7 @@ class Member {
             address = :address,
             profile_image = :profile_image,
             membership_type = :membership_type,
-            join_date = :join_date,
+            {$this->dateColumn} = :join_date,
             admission_fee = :admission_fee,
             monthly_fee = :monthly_fee,
             locker_fee = :locker_fee,
@@ -135,9 +184,9 @@ class Member {
             total_due_amount = :total_due_amount,
             status = :status
             WHERE id = :id";
-        
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
         $stmt->bindValue(':member_code', trim((string)($data['member_code'] ?? '')), PDO::PARAM_STR);
         $stmt->bindValue(':name', trim((string)($data['name'] ?? '')), PDO::PARAM_STR);
         $stmt->bindValue(':email', $data['email'] ?? null, PDO::PARAM_STR);
@@ -156,56 +205,84 @@ class Member {
 
         return $stmt->execute();
     }
-    
+
     public function getByRfidUid($rfidUid) {
-        $query = "SELECT * FROM " . $this->table . " WHERE rfid_uid = :rfid_uid LIMIT 1";
+        $query = $this->baseSelect() . ' WHERE m.rfid_uid = :rfid_uid LIMIT 1';
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':rfid_uid', $rfidUid, PDO::PARAM_STR);
+        $stmt->bindValue(':rfid_uid', trim((string)$rfidUid), PDO::PARAM_STR);
         $stmt->execute();
-        return $stmt->fetch();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
     public function delete($id) {
-        $query = "DELETE FROM " . $this->table . " WHERE id = :id";
+        $query = "DELETE FROM {$this->table} WHERE id = :id";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
         return $stmt->execute();
     }
 
     public function updateFeeDueDate($id, $date) {
-        $query = "UPDATE " . $this->table . " SET next_fee_due_date = :date WHERE id = :id";
+        $query = "UPDATE {$this->table} SET next_fee_due_date = :date WHERE id = :id";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
         $stmt->bindValue(':date', $date, PDO::PARAM_STR);
         return $stmt->execute();
     }
 
     public function getRecent($limit = 10) {
-        $query = "SELECT * FROM " . $this->table . " ORDER BY created_at DESC LIMIT :limit";
+        $limit = $this->normalizePositiveInt($limit, 10, 50);
+        $query = $this->baseSelect() . ' ORDER BY m.created_at DESC LIMIT :limit';
         $stmt = $this->conn->prepare($query);
-        $stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->execute();
-        return $stmt->fetchAll();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function getStats() {
-        $totalQuery = "SELECT COUNT(*) as total FROM " . $this->table;
-        $activeQuery = "SELECT COUNT(*) as active FROM " . $this->table . " WHERE status = 'active'";
-        
-        $totalStmt = $this->conn->prepare($totalQuery);
-        $activeStmt = $this->conn->prepare($activeQuery);
-        
-        $totalStmt->execute();
-        $activeStmt->execute();
-        
-        $totalResult = $totalStmt->fetch(PDO::FETCH_ASSOC);
-        $activeResult = $activeStmt->fetch(PDO::FETCH_ASSOC);
-        
+        $statsQuery = "SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive,
+                SUM(CASE WHEN is_checked_in = 1 THEN 1 ELSE 0 END) as checked_in_now,
+                SUM(CASE WHEN next_fee_due_date = CURDATE() THEN 1 ELSE 0 END) as due_today,
+                SUM(CASE WHEN next_fee_due_date < CURDATE() AND COALESCE(total_due_amount, 0) > 0 THEN 1 ELSE 0 END) as overdue,
+                COALESCE(SUM(CASE WHEN status = 'active' THEN total_due_amount ELSE 0 END), 0) as active_due_amount
+            FROM {$this->table}";
+
+        $stmt = $this->conn->prepare($statsQuery);
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
         return [
-            'total' => intval($totalResult['total'] ?? 0),
-            'active' => intval($activeResult['active'] ?? 0),
-            'inactive' => intval($totalResult['total'] ?? 0) - intval($activeResult['active'] ?? 0)
+            'total' => (int)($result['total'] ?? 0),
+            'active' => (int)($result['active'] ?? 0),
+            'inactive' => (int)($result['inactive'] ?? 0),
+            'checked_in_now' => (int)($result['checked_in_now'] ?? 0),
+            'due_today' => (int)($result['due_today'] ?? 0),
+            'overdue' => (int)($result['overdue'] ?? 0),
+            'active_due_amount' => (float)($result['active_due_amount'] ?? 0)
+        ];
+    }
+
+    public function getOperationalSnapshot(): array {
+        $query = "SELECT
+                SUM(CASE WHEN status = 'active' AND is_checked_in = 1 THEN 1 ELSE 0 END) as checked_in_now,
+                SUM(CASE WHEN status = 'active' AND next_fee_due_date = CURDATE() THEN 1 ELSE 0 END) as due_today,
+                SUM(CASE WHEN status = 'active' AND next_fee_due_date < CURDATE() AND COALESCE(total_due_amount, 0) > 0 THEN 1 ELSE 0 END) as overdue,
+                SUM(CASE WHEN status = 'active' AND {$this->dateColumn} >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN 1 ELSE 0 END) as new_this_month,
+                COALESCE(SUM(CASE WHEN status = 'active' THEN total_due_amount ELSE 0 END), 0) as total_active_due
+            FROM {$this->table}";
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'checked_in_now' => (int)($result['checked_in_now'] ?? 0),
+            'due_today' => (int)($result['due_today'] ?? 0),
+            'overdue' => (int)($result['overdue'] ?? 0),
+            'new_this_month' => (int)($result['new_this_month'] ?? 0),
+            'total_active_due' => (float)($result['total_active_due'] ?? 0)
         ];
     }
 }
-

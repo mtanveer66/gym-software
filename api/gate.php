@@ -19,7 +19,7 @@ require_once __DIR__ . '/../app/helpers/Cache.php';
 header('Content-Type: application/json');
 
 // Maintenance mode check
-if (env('MAINTENANCE_MODE', 'false') === 'true') {
+if (env_bool('MAINTENANCE_MODE', false)) {
     http_response_code(503);
     echo json_encode([
         'success' => false,

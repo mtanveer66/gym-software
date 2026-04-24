@@ -59,25 +59,85 @@ function env($key, $default = null) {
     return $value;
 }
 
+/**
+ * Resolve environment values to booleans safely.
+ */
+function env_bool($key, $default = false) {
+    $value = env($key, $default);
+
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_numeric($value)) {
+        return (int)$value === 1;
+    }
+
+    if (is_string($value)) {
+        $normalized = strtolower(trim($value));
+        return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    return (bool)$value;
+}
+
+/**
+ * Resolve member join/admission date column with legacy fallback support.
+ */
+function resolve_member_date_column(PDO $db, string $tableName): string {
+    static $cache = [];
+
+    if (isset($cache[$tableName])) {
+        return $cache[$tableName];
+    }
+
+    $query = "SELECT COLUMN_NAME
+              FROM INFORMATION_SCHEMA.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = :table_name
+                AND COLUMN_NAME IN ('join_date', 'admission_date')";
+
+    $stmt = $db->prepare($query);
+    $stmt->bindValue(':table_name', $tableName, PDO::PARAM_STR);
+    $stmt->execute();
+    $columns = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    if (in_array('join_date', $columns, true)) {
+        return $cache[$tableName] = 'join_date';
+    }
+
+    if (in_array('admission_date', $columns, true)) {
+        return $cache[$tableName] = 'admission_date';
+    }
+
+    return $cache[$tableName] = 'join_date';
+}
+
 // ============================================================================
 // Application Configuration
 // ============================================================================
 
 define('APP_ENV', env('APP_ENV', 'development'));
-define('DEBUG_MODE', env('APP_DEBUG', 'true') === 'true');
+define('DEBUG_MODE', env_bool('APP_DEBUG', true));
 
 // ============================================================================
 // Session Configuration
 // ============================================================================
 
 if (session_status() === PHP_SESSION_NONE) {
+    $cookieDomain = $_SERVER['HTTP_HOST'] ?? '';
+    $cookieDomain = preg_replace('/:\\d+$/', '', $cookieDomain);
+    if ($cookieDomain === 'localhost') {
+        $cookieDomain = '';
+    }
+
     // Set session cookie parameters from environment
     session_set_cookie_params([
         'lifetime' => (int)env('SESSION_LIFETIME', 3600),
         'path' => '/',
-        'domain' => $_SERVER['HTTP_HOST'] ?? '',
-        'secure' => env('SESSION_SECURE_COOKIE', 'false') === 'true',
-        'httponly' => env('SESSION_HTTPONLY', 'true') === 'true',
+        'domain' => $cookieDomain,
+        'secure' => env_bool('SESSION_SECURE_COOKIE', false),
+        'httponly' => env_bool('SESSION_HTTPONLY', true),
         'samesite' => env('SESSION_SAMESITE', 'Strict')
     ]);
     session_start();
@@ -151,7 +211,7 @@ define('RATE_LIMIT_GATE_WINDOW', (int)env('RATE_LIMIT_GATE_WINDOW', 60));
 // Cache Configuration
 // ============================================================================
 
-define('CACHE_ENABLED', env('CACHE_ENABLED', 'true') === 'true');
+define('CACHE_ENABLED', env_bool('CACHE_ENABLED', true));
 define('CACHE_DEFAULT_TTL', (int)env('CACHE_DEFAULT_TTL', 300));
 
 // ============================================================================

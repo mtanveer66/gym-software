@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
+require_once __DIR__ . '/../app/models/Attendance.php';
 require_once __DIR__ . '/../app/models/Expense.php';
 
 // Release session lock immediately to prevent blocking parallel requests
@@ -38,6 +39,8 @@ try {
 
     $memberMen = new Member($db, 'men');
     $memberWomen = new Member($db, 'women');
+    $attendanceMen = new Attendance($db, 'men');
+    $attendanceWomen = new Attendance($db, 'women');
     $expense = new Expense($db);
 
     // Get stats with error handling
@@ -75,6 +78,30 @@ try {
         }
     } catch (Exception $e) {
         $recentWomen = [];
+    }
+
+    try {
+        $opsMen = $memberMen->getOperationalSnapshot();
+    } catch (Throwable $e) {
+        $opsMen = ['checked_in_now' => 0, 'due_today' => 0, 'overdue' => 0, 'new_this_month' => 0, 'total_active_due' => 0.0];
+    }
+
+    try {
+        $opsWomen = $memberWomen->getOperationalSnapshot();
+    } catch (Throwable $e) {
+        $opsWomen = ['checked_in_now' => 0, 'due_today' => 0, 'overdue' => 0, 'new_this_month' => 0, 'total_active_due' => 0.0];
+    }
+
+    try {
+        $attendanceTodayMen = $attendanceMen->getTodaySummary();
+    } catch (Throwable $e) {
+        $attendanceTodayMen = ['total_visits' => 0, 'unique_members' => 0, 'active_sessions' => 0];
+    }
+
+    try {
+        $attendanceTodayWomen = $attendanceWomen->getTodaySummary();
+    } catch (Throwable $e) {
+        $attendanceTodayWomen = ['total_visits' => 0, 'unique_members' => 0, 'active_sessions' => 0];
     }
 
     // Get revenue (all payments - income/intake) for current month
@@ -115,6 +142,21 @@ try {
     // Calculate profit
     $profit = $revenue - $expenses;
 
+    // Today's collections and collection trend snapshot
+    try {
+        $todayRevenueQuery = "SELECT SUM(amount) as total FROM (
+            SELECT amount FROM payments_men WHERE payment_date = CURDATE()
+            UNION ALL
+            SELECT amount FROM payments_women WHERE payment_date = CURDATE()
+        ) as today_payments";
+        $todayRevenueStmt = $db->prepare($todayRevenueQuery);
+        $todayRevenueStmt->execute();
+        $todayRevenueResult = $todayRevenueStmt->fetch(PDO::FETCH_ASSOC);
+        $todayRevenue = floatval($todayRevenueResult['total'] ?? 0.00);
+    } catch (Throwable $e) {
+        $todayRevenue = 0.00;
+    }
+
     // Get total revenue (all time - all payments received)
     try {
         $totalRevenueQuery = "SELECT SUM(amount) as total FROM (
@@ -143,26 +185,52 @@ try {
     // Calculate net profit (all time)
     $netProfit = $totalRevenue - $totalExpenses;
 
+    $checkedInNow = ($opsMen['checked_in_now'] ?? 0) + ($opsWomen['checked_in_now'] ?? 0);
+    $dueToday = ($opsMen['due_today'] ?? 0) + ($opsWomen['due_today'] ?? 0);
+    $overdue = ($opsMen['overdue'] ?? 0) + ($opsWomen['overdue'] ?? 0);
+    $newThisMonth = ($opsMen['new_this_month'] ?? 0) + ($opsWomen['new_this_month'] ?? 0);
+    $activeDueAmount = ($opsMen['total_active_due'] ?? 0) + ($opsWomen['total_active_due'] ?? 0);
+    $todayVisits = ($attendanceTodayMen['total_visits'] ?? 0) + ($attendanceTodayWomen['total_visits'] ?? 0);
+    $todayUniqueMembers = ($attendanceTodayMen['unique_members'] ?? 0) + ($attendanceTodayWomen['unique_members'] ?? 0);
+    $activeSessions = ($attendanceTodayMen['active_sessions'] ?? 0) + ($attendanceTodayWomen['active_sessions'] ?? 0);
+
     echo json_encode([
         'success' => true,
         'data' => [
             'men' => [
                 'stats' => $statsMen,
-                'recent' => $recentMen
+                'recent' => $recentMen,
+                'operations' => $opsMen,
+                'attendance_today' => $attendanceTodayMen
             ],
             'women' => [
                 'stats' => $statsWomen,
-                'recent' => $recentWomen
+                'recent' => $recentWomen,
+                'operations' => $opsWomen,
+                'attendance_today' => $attendanceTodayWomen
             ],
             'total' => [
                 'members' => $statsMen['total'] + $statsWomen['total'],
                 'active' => $statsMen['active'] + $statsWomen['active']
+            ],
+            'operations' => [
+                'checked_in_now' => $checkedInNow,
+                'due_today' => $dueToday,
+                'overdue' => $overdue,
+                'new_this_month' => $newThisMonth,
+                'active_due_amount' => $activeDueAmount,
+                'today_visits' => $todayVisits,
+                'today_unique_members' => $todayUniqueMembers,
+                'active_sessions' => $activeSessions
             ],
             'financial' => [
                 'current_month' => [
                     'revenue' => $revenue,
                     'expenses' => $expenses,
                     'profit' => $profit
+                ],
+                'today' => [
+                    'revenue' => $todayRevenue
                 ],
                 'all_time' => [
                     'revenue' => $totalRevenue,

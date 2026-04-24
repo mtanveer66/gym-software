@@ -32,8 +32,15 @@ try {
             $limit = $_GET['limit'] ?? 20;
             $search = $_GET['search'] ?? '';
             $status = $_GET['status'] ?? null;  // 'active' or 'inactive' or null for all
-            
-            $result = $member->getAll($page, $limit, $search, $status);
+            $filters = [
+                'due_status' => $_GET['due_status'] ?? null,
+                'due_within_days' => $_GET['due_within_days'] ?? null,
+                'checked_in' => $_GET['checked_in'] ?? null,
+                'sort_by' => $_GET['sort_by'] ?? null,
+                'sort_dir' => $_GET['sort_dir'] ?? null,
+            ];
+
+            $result = $member->getAll($page, $limit, $search, $status, $filters);
             echo json_encode([
                 'success' => true,
                 'data' => $result['data'],
@@ -97,7 +104,12 @@ try {
         case 'create':
             if ($method === 'POST') {
                 $data = json_decode(file_get_contents('php://input'), true);
-                
+                if (!is_array($data)) {
+                    http_response_code(400);
+                    echo json_encode(['success' => false, 'message' => 'Invalid request payload']);
+                    exit;
+                }
+
                 // Validate required fields
                 $required = ['member_code', 'name', 'phone', 'join_date'];
                 foreach ($required as $field) {
@@ -158,10 +170,11 @@ try {
                     'profile_image' => $data['profile_image'] ?? null,
                     'membership_type' => $data['membership_type'] ?? 'Basic',
                     'join_date' => $data['join_date'],
-                    'admission_fee' => $data['admission_fee'] ?? 0.00,
-                    'monthly_fee' => $data['monthly_fee'] ?? 0.00,
-                    'locker_fee' => $data['locker_fee'] ?? 0.00,
+                    'admission_fee' => (float)($data['admission_fee'] ?? 0.00),
+                    'monthly_fee' => (float)($data['monthly_fee'] ?? 0.00),
+                    'locker_fee' => (float)($data['locker_fee'] ?? 0.00),
                     'next_fee_due_date' => $data['next_fee_due_date'] ?? null,
+                    'total_due_amount' => max(0, (float)($data['total_due_amount'] ?? 0.00)),
                     'status' => $data['status'] ?? 'active',
                     'is_checked_in' => 0
                 ];
@@ -179,12 +192,27 @@ try {
         case 'update':
             if ($method === 'POST' || $method === 'PUT') {
                 $data = json_decode(file_get_contents('php://input'), true);
+                if (!is_array($data)) {
+                    http_response_code(400);
+                    echo json_encode(['success' => false, 'message' => 'Invalid request payload']);
+                    exit;
+                }
+
                 $id = $data['id'] ?? $_GET['id'] ?? null;
 
                 if (!$id) {
                     http_response_code(400);
                     echo json_encode(['success' => false, 'message' => 'Missing member ID']);
                     exit;
+                }
+
+                $required = ['member_code', 'name', 'phone', 'join_date'];
+                foreach ($required as $field) {
+                    if (empty($data[$field])) {
+                        http_response_code(400);
+                        echo json_encode(['success' => false, 'message' => "Missing required field: $field"]);
+                        exit;
+                    }
                 }
 
                 $phoneCheck = $db->prepare("SELECT id FROM members_{$gender} WHERE phone = :phone AND id != :id LIMIT 1");
@@ -219,10 +247,11 @@ try {
                     'profile_image' => $data['profile_image'] ?? null,
                     'membership_type' => $data['membership_type'] ?? 'Basic',
                     'join_date' => $data['join_date'],
-                    'admission_fee' => $data['admission_fee'] ?? 0.00,
-                    'monthly_fee' => $data['monthly_fee'] ?? 0.00,
-                    'locker_fee' => $data['locker_fee'] ?? 0.00,
+                    'admission_fee' => (float)($data['admission_fee'] ?? 0.00),
+                    'monthly_fee' => (float)($data['monthly_fee'] ?? 0.00),
+                    'locker_fee' => (float)($data['locker_fee'] ?? 0.00),
                     'next_fee_due_date' => $data['next_fee_due_date'] ?? null,
+                    'total_due_amount' => max(0, (float)($data['total_due_amount'] ?? 0.00)),
                     'status' => $data['status'] ?? 'active'
                 ];
 
