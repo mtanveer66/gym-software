@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Member Profile - Women - Gym System</title>
+
+    <link rel="stylesheet" href="assets/css/member-profile.css">
+    <style>
+        :root {
+            --primary-color: #e91e63;
+            --secondary-color: #333;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+            --bg-color: #0a0e27;
+            --border-color: #2d3748;
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        body {
+            margin: 0;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f1419 100%);
+            background-attachment: fixed;
+            font-family: "Poppins", sans-serif;
+            color: #ffffff;
+        }
+
+        .loading,
+        .error {
+            text-align: center;
+            color: #d1d5db;
+        }
+
+        .error {
+            color: var(--error-color);
+            background: rgba(220, 53, 69, 0.1);
+            border: 1px solid var(--error-color);
+            border-radius: 10px;
+            margin: 1rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .status-badge.status-active {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid #28a745;
+        }
+
+        .status-badge.status-inactive {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+            border: 1px solid #dc3545;
+        }
+
+        .status-badge.status-completed {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid #28a745;
+        }
+
+        .status-badge.status-pending {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid #ffc107;
+        }
+    </style>
+    <style>
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.3s;
+            border: none;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Lookup -->
+    <div class="lookup-bar">
+        <div class="lookup-container">
+            <input id="memberCodeInput" class="lookup-input" placeholder="Enter Member Code, Email, Phone, or Name">
+            <button id="lookupBtn" class="btn">Lookup</button>
+        </div>
+    </div>
+
+    <!-- Profile -->
+    <div class="member-content">
+        <div id="memberContent">
+            <div class="loading">Enter a member code to view profile…</div>
+        </div>
+    </div>
+
+    <script src="assets/js/utils.js?v=5"></script>
+    <script src="assets/js/member-profile.js?v=5"></script>
+
+    <script>
+        window.MEMBER_GENDER = 'women';
+
+        document.addEventListener("DOMContentLoaded", () => {
+            fetch('api/auth.php?action=check')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.authenticated && data.role === 'member' && data.gender === 'women') {
+                        loadMemberProfile(data.member_code);
+                    }
+                });
+        });
+    </script>
+
+</body>
+
+</html>
