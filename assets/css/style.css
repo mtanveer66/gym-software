@@ -169,6 +169,10 @@ body {
     animation: slideInUp 0.6s ease-out;
 }
 
+.login-box-wide {
+    max-width: 940px;
+}
+
 .login-box h1 {
     text-align: center;
     margin-bottom: 0.75rem;
@@ -187,73 +191,109 @@ body {
     margin-bottom: 1rem;
 }
 
-.login-helper {
-    background: #f8fffb;
+.login-access-card {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fffb 100%);
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 0.9rem 1rem;
-    margin-bottom: 1rem;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
+    border-radius: 18px;
+    padding: 1.25rem;
 }
 
-.login-helper strong {
+.access-intro {
+    background: #f3f7f4;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1.25rem;
+    color: var(--text-secondary);
+}
+
+.access-intro strong {
+    display: block;
+    margin-bottom: 0.2rem;
     color: var(--primary-color);
 }
 
-.login-helper ul {
-    margin: 0.5rem 0 0 1rem;
+.login-split-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: stretch;
 }
 
-.login-helper li {
-    margin-bottom: 0.35rem;
+.login-form-panel {
+    background: #ffffff;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 1.25rem;
+    box-shadow: var(--shadow);
 }
 
-.login-tabs {
-    display: flex;
-    margin-bottom: 1.5rem;
-    border-bottom: 2px solid var(--border-color);
-    background: #f8fffb;
-    border-radius: 10px;
-    padding: 0.25rem;
+.login-panel-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 0.25rem 0.85rem;
+    border-radius: 999px;
+    background: #dcfce7;
+    color: var(--primary-color);
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 0.8rem;
 }
 
-.tab-btn {
-    flex: 1;
-    padding: 0.75rem;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 1rem;
+.member-badge {
+    background: #e0f2fe;
+    color: var(--info-color);
+}
+
+.login-form-panel h2 {
+    font-size: 1.35rem;
+    margin-bottom: 0.45rem;
+    color: var(--text-color);
+}
+
+.login-panel-text {
     color: var(--text-secondary);
-    transition: all 0.3s ease;
-    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.login-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
     position: relative;
 }
 
-.tab-btn.active {
-    color: white;
-    background: var(--primary-gradient);
-    box-shadow: 0 4px 15px rgba(22, 101, 52, 0.22);
-    transform: translateY(-2px);
+.login-divider::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: linear-gradient(180deg, transparent 0%, var(--border-color) 15%, var(--border-color) 85%, transparent 100%);
 }
 
-.tab-btn:hover:not(.active) {
-    color: var(--text-color);
-    background: rgba(22, 101, 52, 0.08);
-}
-
-.login-form {
-    display: none;
-    animation: fadeIn 0.4s ease-in;
-}
-
-.login-form.active {
-    display: block;
+.login-divider span {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    background: #ffffff;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-weight: 700;
+    box-shadow: var(--shadow);
 }
 
 .form-group {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.1rem;
     animation: slideInUp 0.5s ease-out both;
 }
 
@@ -701,6 +741,25 @@ body {
         padding: 1.5rem;
     }
 
+    .login-split-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .login-divider {
+        min-height: 42px;
+        min-width: 100%;
+    }
+
+    .login-divider::before {
+        top: 50%;
+        bottom: auto;
+        left: 0;
+        right: 0;
+        width: auto;
+        height: 1px;
+        background: linear-gradient(90deg, transparent 0%, var(--border-color) 15%, var(--border-color) 85%, transparent 100%);
+    }
+
     .form-row {
         grid-template-columns: 1fr;
     }
@@ -732,6 +791,11 @@ body {
 
 @media (max-width: 480px) {
     .login-box {
+        padding: 1rem;
+    }
+
+    .login-access-card,
+    .login-form-panel {
         padding: 1rem;
     }
 
