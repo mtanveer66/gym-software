@@ -202,13 +202,16 @@ try {
             throw new Exception('Failed to update member due amount');
         }
 
-        $verifyQuery = "SELECT total_due_amount, next_fee_due_date FROM members_{$gender} WHERE id = :id";
+        $statusSync = $member->syncActivityStatus($memberId);
+
+        $verifyQuery = "SELECT total_due_amount, next_fee_due_date, status FROM members_{$gender} WHERE id = :id";
         $verifyStmt = $db->prepare($verifyQuery);
         $verifyStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
         $verifyStmt->execute();
         $verified = $verifyStmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $newTotalDue = round((float)($verified['total_due_amount'] ?? $newTotalDue), 2);
         $nextFeeDueDate = $verified['next_fee_due_date'] ?? $nextFeeDueDate;
+        $memberStatus = $verified['status'] ?? ($statusSync['status'] ?? $memberData['status'] ?? 'active');
 
         $db->commit();
 
@@ -236,6 +239,7 @@ try {
             'monthly_fee' => $monthlyFee,
             'payment_amount' => $actualPaymentAmount,
             'total_owed' => $totalOwed,
+            'member_status' => $memberStatus,
             'calculation' => [
                 'current_due' => $currentDueAmount,
                 'monthly_fee_added' => $monthlyFee,

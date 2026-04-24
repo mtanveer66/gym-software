@@ -234,6 +234,60 @@ class Member {
         return $stmt->execute();
     }
 
+    public function syncActivityStatus($id): array {
+        $query = "UPDATE {$this->table}
+                  SET status = CASE
+                      WHEN COALESCE(total_due_amount, 0) > 0
+                           AND COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+                      THEN 'inactive'
+                      ELSE 'active'
+                  END
+                  WHERE id = :id";
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $statusStmt = $this->conn->prepare("SELECT status, total_due_amount, next_fee_due_date, {$this->dateColumn} AS join_date FROM {$this->table} WHERE id = :id LIMIT 1");
+        $statusStmt->bindValue(':id', (int)$id, PDO::PARAM_INT);
+        $statusStmt->execute();
+        $row = $statusStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'status' => $row['status'] ?? null,
+            'total_due_amount' => (float)($row['total_due_amount'] ?? 0),
+            'next_fee_due_date' => $row['next_fee_due_date'] ?? null,
+            'join_date' => $row['join_date'] ?? null,
+        ];
+    }
+
+    public function syncAllActivityStatuses(): array {
+        $query = "UPDATE {$this->table}
+                  SET status = CASE
+                      WHEN COALESCE(total_due_amount, 0) > 0
+                           AND COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+                      THEN 'inactive'
+                      ELSE 'active'
+                  END";
+        $updatedStmt = $this->conn->prepare($query);
+        $updatedStmt->execute();
+
+        $summaryStmt = $this->conn->prepare("SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) AS inactive
+            FROM {$this->table}");
+        $summaryStmt->execute();
+        $summary = $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'affected_rows' => $updatedStmt->rowCount(),
+            'total' => (int)($summary['total'] ?? 0),
+            'active' => (int)($summary['active'] ?? 0),
+            'inactive' => (int)($summary['inactive'] ?? 0),
+        ];
+    }
+
     public function getRecent($limit = 10) {
         $limit = $this->normalizePositiveInt($limit, 10, 50);
         $query = $this->baseSelect() . ' ORDER BY m.created_at DESC LIMIT :limit';

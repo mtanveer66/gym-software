@@ -3,7 +3,9 @@
  * Cron Logic Helper to automate tasks
  */
 
+require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../app/models/Member.php';
 
 class CronHelper {
     private $db;
@@ -64,29 +66,9 @@ class CronHelper {
     }
 
     private function performArchive() {
-        $tables = ['men', 'women'];
-        foreach ($tables as $gender) {
-            $memberTable = "members_{$gender}";
-            $paymentTable = "payments_{$gender}";
-            $joinDateColumn = resolve_member_date_column($this->db, $memberTable);
-            
-            // Logic: Active members with no payment (or join/admission date) > 60 days
-            $query = "SELECT m.id 
-                      FROM {$memberTable} m
-                      LEFT JOIN {$paymentTable} p ON m.id = p.member_id
-                      WHERE m.status = 'active'
-                      GROUP BY m.id
-                      HAVING DATEDIFF(CURDATE(), COALESCE(MAX(p.payment_date), m.{$joinDateColumn})) > 60";
-            
-            $stmt = $this->db->prepare($query);
-            $stmt->execute();
-            $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
-            
-            if (!empty($ids)) {
-                $idList = implode(',', $ids);
-                $update = "UPDATE {$memberTable} SET status = 'inactive' WHERE id IN ($idList)";
-                $this->db->exec($update);
-            }
+        foreach (['men', 'women'] as $gender) {
+            $member = new Member($this->db, $gender);
+            $member->syncAllActivityStatuses();
         }
     }
 }

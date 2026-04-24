@@ -200,11 +200,13 @@ try {
             }
         }
         
+        $statusSync = $member->syncActivityStatus($memberId);
+
         // Commit transaction
         $db->commit();
         
         // Verify the update was successful
-        $verifyQuery = "SELECT total_due_amount FROM members_{$gender} WHERE id = :id";
+        $verifyQuery = "SELECT total_due_amount, status, next_fee_due_date FROM members_{$gender} WHERE id = :id";
         $verifyStmt = $db->prepare($verifyQuery);
         $verifyStmt->bindValue(':id', $memberId, PDO::PARAM_INT);
         $verifyStmt->execute();
@@ -221,7 +223,9 @@ try {
             'new_due_amount' => $actualNewAmount,
             'payment_recorded' => $shouldCreatePayment && $paymentId !== null,
             'payment_id' => $paymentId,
-            'payment_amount' => $paymentAmount
+            'payment_amount' => $paymentAmount,
+            'member_status' => $updated['status'] ?? ($statusSync['status'] ?? $memberData['status'] ?? 'active'),
+            'next_fee_due_date' => $updated['next_fee_due_date'] ?? ($memberData['next_fee_due_date'] ?? null)
         ];
         
         echo json_encode($response);
