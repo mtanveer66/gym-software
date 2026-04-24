@@ -3779,7 +3779,6 @@ function downloadPayments() {
 }
 
 function loadSync() {
-    // Detect if we're on online server (check if URL contains online domain or not localhost)
     const isOnline = !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1');
 
     const html = `
@@ -3791,177 +3790,186 @@ function loadSync() {
                 steps: [
                     'If you are not sure, stop and ask before syncing.',
                     'Watch the result box after every sync.',
-                    'Do not repeat force sync unless you understand why it is needed.'
+                    'Use Retry Failed when some records show an error reason below.'
                 ]
             })}
             <div class="section-header">
                 <h2>Send / Download Data</h2>
                 <div class="section-actions">
-                    ${isOnline ?
-            '<button class="btn btn-primary" id="reverseSyncBtn">⬇️ Download to Local</button>' :
-            '<button class="btn btn-primary" id="syncNowBtn">🔄 Send to Online</button>'
-        }
+                    ${isOnline
+            ? '<button class="btn btn-primary" id="reverseSyncBtn">⬇️ Download to Local</button>'
+            : '<button class="btn btn-primary" id="syncNowBtn">🔄 Send to Online</button><button class="btn btn-secondary" id="retryFailedSyncBtn">↺ Retry Failed Only</button>'}
                 </div>
             </div>
             <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 1.5rem; border: 1px solid var(--border-color);">
                 <h3 style="color: #166534;">Current Status</h3>
                 <div id="syncStatus" style="margin-top: 1rem; color: #4b7a5e;">
-                    <p>${isOnline ?
-            'Click "Download to Local" to copy online data into your local database.' :
-            'Click "Send to Online" to upload local data to the online server.'
-        }</p>
+                    <p>${isOnline
+            ? 'Click "Download to Local" to copy online data into your local database.'
+            : 'Click "Send to Online" to upload local data to the online server. Use Retry Failed Only if some records already failed.'}</p>
                 </div>
             </div>
-            <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--border-color);">
-                <h3 style="color: #166534;">Recent Activity</h3>
-                <div id="syncHistory" style="margin-top: 1rem;">
-                    <div class="loading">Loading sync history...</div>
+            <div style="display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
+                <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--border-color);">
+                    <h3 style="color: #166534;">Recent Activity</h3>
+                    <div id="syncHistory" style="margin-top: 1rem;">
+                        <div class="loading">Loading sync history...</div>
+                    </div>
                 </div>
+                ${isOnline ? '' : `
+                <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--border-color);">
+                    <h3 style="color: #166534;">Failed Records</h3>
+                    <div id="failedSyncRecords" style="margin-top: 1rem; color: #4b7a5e;">
+                        <div class="loading">Loading failed records...</div>
+                    </div>
+                </div>`}
             </div>
         </div>
     `;
     document.getElementById('contentBody').innerHTML = html;
 
-    if (isOnline) {
-        const reverseSyncBtn = document.getElementById('reverseSyncBtn');
-        if (reverseSyncBtn) {
-            reverseSyncBtn.addEventListener('click', performReverseSync);
-        }
-    } else {
-        const syncBtn = document.getElementById('syncNowBtn');
-        if (syncBtn) {
-            syncBtn.addEventListener('click', performSync);
-        }
-    }
+    const reverseSyncBtn = document.getElementById('reverseSyncBtn');
+    if (reverseSyncBtn) reverseSyncBtn.addEventListener('click', performReverseSync);
+
+    const syncBtn = document.getElementById('syncNowBtn');
+    if (syncBtn) syncBtn.addEventListener('click', () => performSync(false));
+
+    const retryBtn = document.getElementById('retryFailedSyncBtn');
+    if (retryBtn) retryBtn.addEventListener('click', () => performSync(true));
 
     loadSyncHistory();
+    loadFailedSyncRecords();
 }
 
-function performSync() {
+function escapeSyncHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderSyncStatusCard(type, title, data = {}) {
+    const isSuccess = type === 'success';
+    const color = isSuccess ? '#166534' : '#DC2626';
+    const background = isSuccess ? '#ECFDF3' : '#FEF2F2';
+    const border = isSuccess ? '#BBF7D0' : '#FECACA';
+    const synced = data.total_synced || 0;
+    const failed = data.total_failed || 0;
+    const errors = Array.isArray(data.errors) ? data.errors : [];
+    const note = data.message || '';
+
+    return `
+        <div style="padding: 1rem; background: ${background}; border-radius: 10px; color: #14291c; border: 1px solid ${border};">
+            <strong style="color: ${color};">${escapeSyncHtml(title)}</strong>
+            ${note ? `<p style="margin: 0.5rem 0 0 0; color: #4b7a5e;">${escapeSyncHtml(note)}</p>` : ''}
+            ${typeof data.total_synced !== 'undefined' ? `<p style="margin: 0.5rem 0 0 0;">Records Synced: <strong style="color: #166534;">${synced}</strong></p>` : ''}
+            ${typeof data.total_failed !== 'undefined' ? `<p style="margin: 0.35rem 0 0 0;">Records Failed: <strong style="color: ${failed > 0 ? '#DC2626' : '#166534'};">${failed}</strong></p>` : ''}
+            ${errors.length ? `
+                <div style="margin-top: 0.75rem;">
+                    <strong style="color: #B45309;">Main error reasons:</strong>
+                    <ul style="margin: 0.35rem 0 0 1rem; color: #4b7a5e;">
+                        ${errors.slice(0, 5).map(error => `<li>${escapeSyncHtml(error)}</li>`).join('')}
+                        ${errors.length > 5 ? `<li>... and ${errors.length - 5} more</li>` : ''}
+                    </ul>
+                </div>` : ''}
+        </div>
+    `;
+}
+
+function setSyncButtonsBusy(isBusy, isRetry = false) {
     const syncBtn = document.getElementById('syncNowBtn');
-    const syncStatus = document.getElementById('syncStatus');
+    const retryBtn = document.getElementById('retryFailedSyncBtn');
 
     if (syncBtn) {
-        syncBtn.disabled = true;
-        syncBtn.textContent = 'Working...';
+        syncBtn.disabled = isBusy;
+        syncBtn.textContent = isBusy && !isRetry ? 'Working...' : '🔄 Send to Online';
     }
 
-    if (syncStatus) {
-        syncStatus.innerHTML = '<div class="loading">Sending data to online server...</div>';
+    if (retryBtn) {
+        retryBtn.disabled = isBusy;
+        retryBtn.textContent = isBusy && isRetry ? 'Working...' : '↺ Retry Failed Only';
     }
-
-    // First try normal sync
-    fetch('api/sync-local.php?type=manual')
-        .then(async res => {
-            const text = await res.text();
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}: ${text.substring(0, 200)}`);
-            }
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                throw new Error('Invalid JSON response: ' + text.substring(0, 100));
-            }
-        })
-        .then(data => {
-            if (syncBtn) {
-                syncBtn.disabled = false;
-                syncBtn.textContent = '🔄 Send to Online';
-            }
-
-            if (data && data.success) {
-                // If 0 records synced, suggest force sync
-                if ((data.total_synced || 0) === 0 && (data.total_failed || 0) === 0) {
-                    const forceSync = confirm('No records were sent this time. This may mean everything is already marked as sent, even if some data is missing online.\n\nDo you want to send everything again? This ignores previous sync history.');
-                    if (forceSync) {
-                        // Retry with force sync
-                        fetch('api/sync-local.php?type=manual&force=1')
-                            .then(async res => {
-                                const text = await res.text();
-                                if (!res.ok) {
-                                    throw new Error(`HTTP ${res.status}: ${text.substring(0, 200)}`);
-                                }
-                                try {
-                                    return JSON.parse(text);
-                                } catch (e) {
-                                    throw new Error('Invalid JSON response: ' + text.substring(0, 100));
-                                }
-                            })
-                            .then(forceData => {
-                                if (forceData && forceData.success) {
-                                    Utils.showNotification('Full resend completed: ' + (forceData.total_synced || 0) + ' records sent', 'success');
-                                    if (syncStatus) {
-                                        syncStatus.innerHTML = `
-                                            <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                                                <strong>✅ Full resend completed</strong>
-                                                <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Synced: <strong style="color: #28a745;">${forceData.total_synced || 0}</strong></p>
-                                                <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Failed: <strong style="color: ${forceData.total_failed > 0 ? '#dc3545' : '#28a745'};">${forceData.total_failed || 0}</strong></p>
-                                            </div>
-                                        `;
-                                    }
-                                    loadSyncHistory();
-                                } else {
-                                    Utils.showNotification('Full resend failed: ' + (forceData?.message || 'Unknown error'), 'error');
-                                }
-                            })
-                            .catch(err => {
-                                Utils.showNotification('Full resend error: ' + err.message, 'error');
-                            });
-                        return;
-                    }
-                }
-
-                Utils.showNotification(data.message || 'Data send completed successfully', 'success');
-                if (syncStatus) {
-                    syncStatus.innerHTML = `
-                        <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                            <strong>✅ Data send completed</strong>
-                            <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Synced: <strong style="color: #28a745;">${data.total_synced || 0}</strong></p>
-                            <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Failed: <strong style="color: ${data.total_failed > 0 ? '#dc3545' : '#28a745'};">${data.total_failed || 0}</strong></p>
-                            ${data.errors && data.errors.length > 0 ? `
-                                <div style="margin-top: 0.5rem;">
-                                    <strong>Errors:</strong>
-                                    <ul style="margin: 0.5rem 0 0 1rem;">
-                                        ${data.errors.slice(0, 5).map(e => `<li>${e}</li>`).join('')}
-                                        ${data.errors.length > 5 ? `<li>... and ${data.errors.length - 5} more</li>` : ''}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                }
-                loadSyncHistory();
-            } else {
-                Utils.showNotification(data?.message || 'Sync failed', 'error');
-                if (syncStatus) {
-                    syncStatus.innerHTML = `
-                        <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                            <strong>❌ Data send failed</strong>
-                            <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">${data?.message || 'Unknown error'}</p>
-                        </div>
-                    `;
-                }
-            }
-        })
-        .catch(err => {
-            console.error('Sync error:', err);
-            if (syncBtn) {
-                syncBtn.disabled = false;
-                syncBtn.textContent = '🔄 Send to Online';
-            }
-            Utils.showNotification('Error during sync: ' + err.message, 'error');
-            if (syncStatus) {
-                syncStatus.innerHTML = `
-                    <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                        <strong>❌ Data send error</strong>
-                        <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">${err.message}</p>
-                    </div>
-                `;
-            }
-        });
 }
 
-function performReverseSync() {
+async function fetchSyncJson(url) {
+    const res = await fetch(url);
+    const text = await res.text();
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${text.substring(0, 200)}`);
+    }
+    if (!text || !text.trim()) {
+        throw new Error('Empty response from server');
+    }
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        throw new Error('Invalid JSON response: ' + text.substring(0, 100));
+    }
+}
+
+async function performSync(retryFailedOnly = false) {
+    const syncStatus = document.getElementById('syncStatus');
+    setSyncButtonsBusy(true, retryFailedOnly);
+
+    if (syncStatus) {
+        syncStatus.innerHTML = `<div class="loading">${retryFailedOnly ? 'Retrying failed records only...' : 'Sending data to online server...'}</div>`;
+    }
+
+    try {
+        const url = retryFailedOnly ? 'api/sync-local.php?type=manual&retry_failed=1' : 'api/sync-local.php?type=manual';
+        const data = await fetchSyncJson(url);
+        setSyncButtonsBusy(false, retryFailedOnly);
+
+        if (!data || !data.success) {
+            Utils.showNotification(data?.message || 'Sync failed', 'error');
+            if (syncStatus) {
+                syncStatus.innerHTML = renderSyncStatusCard('error', retryFailedOnly ? '❌ Retry failed' : '❌ Data send failed', {
+                    message: data?.message || 'Unknown error'
+                });
+            }
+            loadSyncHistory();
+            loadFailedSyncRecords();
+            return;
+        }
+
+        if (!retryFailedOnly && (data.total_synced || 0) === 0 && (data.total_failed || 0) === 0) {
+            const forceSync = confirm('No records were sent this time. This may mean everything is already marked as sent, even if some data is missing online.\n\nDo you want to send everything again? This ignores previous sync history.');
+            if (forceSync) {
+                setSyncButtonsBusy(true, false);
+                const forceData = await fetchSyncJson('api/sync-local.php?type=manual&force=1');
+                setSyncButtonsBusy(false, false);
+                Utils.showNotification(forceData?.success ? 'Full resend completed' : 'Full resend failed', forceData?.success ? 'success' : 'error');
+                if (syncStatus) {
+                    syncStatus.innerHTML = renderSyncStatusCard(forceData?.success ? 'success' : 'error', forceData?.success ? '✅ Full resend completed' : '❌ Full resend failed', forceData || {});
+                }
+                loadSyncHistory();
+                loadFailedSyncRecords();
+                return;
+            }
+        }
+
+        Utils.showNotification(data.message || (retryFailedOnly ? 'Failed records retried' : 'Data send completed successfully'), 'success');
+        if (syncStatus) {
+            syncStatus.innerHTML = renderSyncStatusCard('success', retryFailedOnly ? '✅ Retry failed completed' : '✅ Data send completed', data);
+        }
+        loadSyncHistory();
+        loadFailedSyncRecords();
+    } catch (err) {
+        console.error('Sync error:', err);
+        setSyncButtonsBusy(false, retryFailedOnly);
+        Utils.showNotification((retryFailedOnly ? 'Retry failed error: ' : 'Error during sync: ') + err.message, 'error');
+        if (syncStatus) {
+            syncStatus.innerHTML = renderSyncStatusCard('error', retryFailedOnly ? '❌ Retry failed error' : '❌ Data send error', {
+                message: err.message
+            });
+        }
+        loadFailedSyncRecords();
+    }
+}
+
+async function performReverseSync() {
     const syncBtn = document.getElementById('reverseSyncBtn');
     const syncStatus = document.getElementById('syncStatus');
 
@@ -3974,102 +3982,118 @@ function performReverseSync() {
         syncStatus.innerHTML = '<div class="loading">Downloading data from online to local database...</div>';
     }
 
-    fetch('api/sync-online-to-local.php?type=manual')
-        .then(async res => {
-            const text = await res.text();
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}: ${text.substring(0, 200)}`);
-            }
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                throw new Error('Invalid JSON response: ' + text.substring(0, 100));
-            }
-        })
-        .then(data => {
-            if (syncBtn) {
-                syncBtn.disabled = false;
-                syncBtn.textContent = '⬇️ Download to Local';
-            }
+    try {
+        const data = await fetchSyncJson('api/sync-online-to-local.php?type=manual');
+        if (syncBtn) {
+            syncBtn.disabled = false;
+            syncBtn.textContent = '⬇️ Download to Local';
+        }
 
-            if (data && data.success) {
-                Utils.showNotification(data.message || 'Download to local completed successfully', 'success');
-                if (syncStatus) {
-                    syncStatus.innerHTML = `
-                        <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                            <strong>✅ Download to local completed</strong>
-                            <p style="margin: 0.5rem 0 0 0;">Records Synced: ${data.total_synced || 0}</p>
-                            <p style="margin: 0.5rem 0 0 0;">Records Failed: ${data.total_failed || 0}</p>
-                            ${data.errors && data.errors.length > 0 ? `
-                                <div style="margin-top: 0.5rem;">
-                                    <strong>Errors:</strong>
-                                    <ul style="margin: 0.5rem 0 0 1rem;">
-                                        ${data.errors.slice(0, 5).map(e => `<li>${e}</li>`).join('')}
-                                        ${data.errors.length > 5 ? `<li>... and ${data.errors.length - 5} more</li>` : ''}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                }
-                loadSyncHistory();
-            } else {
-                Utils.showNotification(data?.message || 'Download to local failed', 'error');
-                if (syncStatus) {
-                    let errorHtml = `
-                        <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                            <strong>❌ Download to local failed</strong>
-                            <p style="margin: 0.5rem 0 0 0;"><strong>${data?.message || 'Unknown error'}</strong></p>
-                    `;
-
-                    if (data?.note) {
-                        errorHtml += `<p style="margin: 0.5rem 0 0 0;">${data.note}</p>`;
-                    }
-
-                    if (data?.solutions && Array.isArray(data.solutions)) {
-                        errorHtml += `
-                            <div style="margin-top: 1rem;">
-                                <strong>Possible Solutions:</strong>
-                                <ul style="margin: 0.5rem 0 0 1.5rem; padding-left: 0;">
-                                    ${data.solutions.map(s => `<li style="margin: 0.25rem 0;">${s}</li>`).join('')}
-                                </ul>
-                            </div>
-                        `;
-                    }
-
-                    if (data?.error) {
-                        errorHtml += `<p style="margin: 0.5rem 0 0 0; font-size: 0.9em; opacity: 0.8;">Technical Error: ${data.error}</p>`;
-                    }
-
-                    errorHtml += `</div>`;
-                    syncStatus.innerHTML = errorHtml;
-                }
-            }
-        })
-        .catch(err => {
-            console.error('Reverse sync error:', err);
-            if (syncBtn) {
-                syncBtn.disabled = false;
-                syncBtn.textContent = '⬇️ Download to Local';
-            }
-            Utils.showNotification('Download to local error: ' + err.message, 'error');
+        if (data && data.success) {
+            Utils.showNotification(data.message || 'Download to local completed successfully', 'success');
             if (syncStatus) {
-                syncStatus.innerHTML = `
-                    <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                        <strong>❌ Download to local error</strong>
-                        <p style="margin: 0.5rem 0 0 0;">${err.message}</p>
-                    </div>
-                `;
+                syncStatus.innerHTML = renderSyncStatusCard('success', '✅ Download to local completed', data);
             }
-        });
+            loadSyncHistory();
+            return;
+        }
+
+        Utils.showNotification(data?.message || 'Download to local failed', 'error');
+        if (syncStatus) {
+            syncStatus.innerHTML = renderSyncStatusCard('error', '❌ Download to local failed', {
+                message: data?.message || 'Unknown error',
+                errors: data?.solutions || []
+            });
+        }
+    } catch (err) {
+        console.error('Reverse sync error:', err);
+        if (syncBtn) {
+            syncBtn.disabled = false;
+            syncBtn.textContent = '⬇️ Download to Local';
+        }
+        Utils.showNotification('Download to local error: ' + err.message, 'error');
+        if (syncStatus) {
+            syncStatus.innerHTML = renderSyncStatusCard('error', '❌ Download to local error', {
+                message: err.message
+            });
+        }
+    }
 }
 
-function loadSyncHistory() {
-    // This would fetch sync history from a sync history API endpoint
-    // For now, just show a message
+async function loadSyncHistory() {
     const syncHistory = document.getElementById('syncHistory');
-    if (syncHistory) {
-        syncHistory.innerHTML = '<p>Recent send/download activity will appear here after you run it.</p>';
+    if (!syncHistory) return;
+
+    syncHistory.innerHTML = '<div class="loading">Loading sync history...</div>';
+
+    try {
+        const data = await fetchSyncJson('api/sync-history.php?limit=8');
+        const sessions = Array.isArray(data?.data) ? data.data : [];
+
+        if (!sessions.length) {
+            syncHistory.innerHTML = '<p style="color: #4b7a5e;">No recent send/download activity yet.</p>';
+            return;
+        }
+
+        syncHistory.innerHTML = sessions.map(session => {
+            const statusColor = session.status === 'completed' ? '#166534' : session.status === 'failed' ? '#DC2626' : '#B45309';
+            return `
+                <div style="padding: 0.85rem 0; border-bottom: 1px solid #BBF7D0;">
+                    <div style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                        <div>
+                            <strong style="color: #14291c;">${escapeSyncHtml((session.session_type || 'sync').replace(/_/g, ' '))}</strong>
+                            <div style="font-size: 0.9rem; color: #4b7a5e; margin-top: 0.2rem;">Started: ${escapeSyncHtml(session.started_at || 'N/A')}</div>
+                            <div style="font-size: 0.9rem; color: #4b7a5e;">Finished: ${escapeSyncHtml(session.completed_at || 'Still running')}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-weight: 700; color: ${statusColor}; text-transform: capitalize;">${escapeSyncHtml(session.status || 'unknown')}</div>
+                            <div style="font-size: 0.9rem; color: #4b7a5e;">Sent: ${Number(session.records_synced || 0)} | Failed: ${Number(session.records_failed || 0)}</div>
+                        </div>
+                    </div>
+                    ${session.error_message ? `<div style="margin-top: 0.5rem; color: #B45309; font-size: 0.9rem; white-space: pre-line;">${escapeSyncHtml(session.error_message)}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        syncHistory.innerHTML = `<div class="error">Could not load sync history: ${escapeSyncHtml(err.message)}</div>`;
+    }
+}
+
+async function loadFailedSyncRecords() {
+    const failedContainer = document.getElementById('failedSyncRecords');
+    if (!failedContainer) return;
+
+    failedContainer.innerHTML = '<div class="loading">Loading failed records...</div>';
+
+    try {
+        const response = await fetchSyncJson('api/sync-local.php?action=failed_records&limit=20');
+        const payload = response?.data || {};
+        const summary = Array.isArray(payload.summary) ? payload.summary : [];
+        const records = Array.isArray(payload.records) ? payload.records : [];
+
+        if (!records.length) {
+            failedContainer.innerHTML = '<p style="color: #166534;">No failed records right now. Good.</p>';
+            return;
+        }
+
+        failedContainer.innerHTML = `
+            ${summary.length ? `<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">${summary.map(item => `<span style="padding: 0.35rem 0.65rem; background: #F3F7F4; border: 1px solid #BBF7D0; border-radius: 999px; color: #14532D; font-size: 0.9rem;">${escapeSyncHtml(item.table_name)}: <strong>${Number(item.failed_count || 0)}</strong></span>`).join('')}</div>` : ''}
+            <div style="display: grid; gap: 0.75rem;">
+                ${records.map(record => `
+                    <div style="padding: 0.9rem; border: 1px solid #FECACA; background: #FEF2F2; border-radius: 10px;">
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                            <strong style="color: #14291c;">${escapeSyncHtml(record.table_name)} #${Number(record.record_id || 0)}</strong>
+                            <span style="font-size: 0.85rem; color: #B45309;">Attempts: ${Number(record.sync_attempts || 0)}</span>
+                        </div>
+                        <div style="margin-top: 0.35rem; color: #4b7a5e; font-size: 0.92rem;">${escapeSyncHtml(record.record_summary || 'Record summary unavailable')}</div>
+                        <div style="margin-top: 0.45rem; color: #DC2626; font-size: 0.92rem;"><strong>Reason:</strong> ${escapeSyncHtml(record.last_error || 'Unknown error')}</div>
+                        <div style="margin-top: 0.35rem; color: #4b7a5e; font-size: 0.85rem;">Last try: ${escapeSyncHtml(record.updated_at || 'N/A')}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } catch (err) {
+        failedContainer.innerHTML = `<div class="error">Could not load failed records: ${escapeSyncHtml(err.message)}</div>`;
     }
 }
 
