@@ -67,8 +67,11 @@ try {
     $params = [];
 
     if ($search !== '') {
-        $filters[] = '(member_code LIKE :search OR name LIKE :search OR phone LIKE :search)';
-        $params[':search'] = '%' . $search . '%';
+        $filters[] = '(member_code LIKE :search_code OR name LIKE :search_name OR phone LIKE :search_phone)';
+        $searchParam = '%' . $search . '%';
+        $params[':search_code'] = $searchParam;
+        $params[':search_name'] = $searchParam;
+        $params[':search_phone'] = $searchParam;
     }
 
     $whereClause = !empty($filters) ? 'WHERE ' . implode(' AND ', $filters) : '';

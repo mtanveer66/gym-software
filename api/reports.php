@@ -116,9 +116,9 @@ try {
                         COALESCE(SUM(amount), 0) as total_revenue,
                         COALESCE(AVG(amount), 0) as avg_payment,
                         SUM(CASE WHEN payment_date = CURDATE() THEN amount ELSE 0 END) as revenue_today,
-                        SUM(CASE WHEN payment_date BETWEEN :month_start AND :month_end THEN amount ELSE 0 END) as revenue_this_month,
+                        SUM(CASE WHEN payment_date BETWEEN :month_start_amount AND :month_end_amount THEN amount ELSE 0 END) as revenue_this_month,
                         SUM(CASE WHEN payment_date = CURDATE() THEN 1 ELSE 0 END) as payments_today,
-                        SUM(CASE WHEN payment_date BETWEEN :month_start AND :month_end THEN 1 ELSE 0 END) as payments_this_month,
+                        SUM(CASE WHEN payment_date BETWEEN :month_start_count AND :month_end_count THEN 1 ELSE 0 END) as payments_this_month,
                         SUM(CASE WHEN status = 'pending' THEN COALESCE(remaining_amount, 0) ELSE 0 END) as pending_remaining_amount
                      FROM (
                          SELECT amount, payment_date, status, remaining_amount FROM payments_men
@@ -126,8 +126,10 @@ try {
                          SELECT amount, payment_date, status, remaining_amount FROM payments_women
                      ) all_payments";
             $stmt = $db->prepare($query);
-            $stmt->bindValue(':month_start', $monthStart, PDO::PARAM_STR);
-            $stmt->bindValue(':month_end', $monthEnd, PDO::PARAM_STR);
+            $stmt->bindValue(':month_start_amount', $monthStart, PDO::PARAM_STR);
+            $stmt->bindValue(':month_end_amount', $monthEnd, PDO::PARAM_STR);
+            $stmt->bindValue(':month_start_count', $monthStart, PDO::PARAM_STR);
+            $stmt->bindValue(':month_end_count', $monthEnd, PDO::PARAM_STR);
             $stmt->execute();
             $stats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 

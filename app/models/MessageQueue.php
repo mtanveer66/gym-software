@@ -37,10 +37,11 @@ class MessageQueue {
 
     public function getPending($limit = 50) {
         $query = "SELECT * FROM {$this->table}
-                  WHERE status = 'pending' AND scheduled_for <= NOW()
+                  WHERE status = 'pending' AND scheduled_for <= :current_time
                   ORDER BY scheduled_for ASC
                   LIMIT :limit";
         $stmt = $this->conn->prepare($query);
+        $stmt->bindValue(':current_time', date('Y-m-d H:i:s'), PDO::PARAM_STR);
         $stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -51,12 +52,13 @@ class MessageQueue {
                   SET status = :status,
                       attempt_count = attempt_count + 1,
                       last_attempt_at = NOW(),
-                      sent_at = CASE WHEN :status = 'sent' THEN NOW() ELSE sent_at END,
+                      sent_at = CASE WHEN :sent_status = 'sent' THEN NOW() ELSE sent_at END,
                       failure_reason = :failure_reason
                   WHERE id = :id";
         $stmt = $this->conn->prepare($query);
         $stmt->bindValue(':id', $id, PDO::PARAM_INT);
         $stmt->bindValue(':status', $status, PDO::PARAM_STR);
+        $stmt->bindValue(':sent_status', $status, PDO::PARAM_STR);
         $stmt->bindValue(':failure_reason', $failureReason, PDO::PARAM_STR);
         return $stmt->execute();
     }

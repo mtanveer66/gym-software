@@ -52,8 +52,13 @@ class Member {
 
         $search = trim((string)$search);
         if ($search !== '') {
-            $where[] = '(m.member_code LIKE :search OR m.name LIKE :search OR m.phone LIKE :search OR m.email LIKE :search OR m.rfid_uid LIKE :search)';
-            $params[':search'] = '%' . $search . '%';
+            $where[] = '(m.member_code LIKE :search_code OR m.name LIKE :search_name OR m.phone LIKE :search_phone OR m.email LIKE :search_email OR m.rfid_uid LIKE :search_rfid)';
+            $searchParam = '%' . $search . '%';
+            $params[':search_code'] = $searchParam;
+            $params[':search_name'] = $searchParam;
+            $params[':search_phone'] = $searchParam;
+            $params[':search_email'] = $searchParam;
+            $params[':search_rfid'] = $searchParam;
         }
 
         if ($status !== null && in_array($status, ['active', 'inactive'], true)) {

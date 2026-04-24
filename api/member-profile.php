@@ -51,14 +51,17 @@ try {
             $searchTerm = $memberCode;
             // Search in men's table
             $searchQuery = "SELECT * FROM members_men WHERE 
-                member_code LIKE :search OR 
-                email LIKE :search OR 
-                phone LIKE :search OR 
-                name LIKE :search
+                member_code LIKE :search_code OR 
+                email LIKE :search_email OR 
+                phone LIKE :search_phone OR 
+                name LIKE :search_name
                 LIMIT 1";
             $searchStmt = $db->prepare($searchQuery);
             $searchParam = '%' . $searchTerm . '%';
-            $searchStmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+            $searchStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+            $searchStmt->bindValue(':search_email', $searchParam, PDO::PARAM_STR);
+            $searchStmt->bindValue(':search_phone', $searchParam, PDO::PARAM_STR);
+            $searchStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
             $searchStmt->execute();
             $member = $searchStmt->fetch();
             $gender = 'men';
@@ -66,13 +69,16 @@ try {
             // If not found in men's, try women's
             if (!$member) {
                 $searchQuery = "SELECT * FROM members_women WHERE 
-                    member_code LIKE :search OR 
-                    email LIKE :search OR 
-                    phone LIKE :search OR 
-                    name LIKE :search
+                    member_code LIKE :search_code OR 
+                    email LIKE :search_email OR 
+                    phone LIKE :search_phone OR 
+                    name LIKE :search_name
                     LIMIT 1";
                 $searchStmt = $db->prepare($searchQuery);
-                $searchStmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+                $searchStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+                $searchStmt->bindValue(':search_email', $searchParam, PDO::PARAM_STR);
+                $searchStmt->bindValue(':search_phone', $searchParam, PDO::PARAM_STR);
+                $searchStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
                 $searchStmt->execute();
                 $member = $searchStmt->fetch();
                 $gender = 'women';

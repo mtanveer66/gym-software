@@ -79,8 +79,13 @@ class Attendance {
 
         $search = trim((string)($filters['search'] ?? ''));
         if ($search !== '') {
-            $where[] = '(m.member_code LIKE :search OR m.name LIKE :search OR m.phone LIKE :search OR a.entry_gate_id LIKE :search OR a.exit_gate_id LIKE :search)';
-            $params[':search'] = '%' . $search . '%';
+            $where[] = '(m.member_code LIKE :search_code OR m.name LIKE :search_name OR m.phone LIKE :search_phone OR a.entry_gate_id LIKE :search_entry_gate OR a.exit_gate_id LIKE :search_exit_gate)';
+            $searchParam = '%' . $search . '%';
+            $params[':search_code'] = $searchParam;
+            $params[':search_name'] = $searchParam;
+            $params[':search_phone'] = $searchParam;
+            $params[':search_entry_gate'] = $searchParam;
+            $params[':search_exit_gate'] = $searchParam;
         }
 
         $startDate = trim((string)($filters['start_date'] ?? ''));

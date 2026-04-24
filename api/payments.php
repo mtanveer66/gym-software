@@ -61,7 +61,7 @@ try {
                 }
                 
                 if (!empty($search)) {
-                    $whereClause .= " AND (m.member_code LIKE :search OR m.name LIKE :search)";
+                    $whereClause .= " AND (m.member_code LIKE :search_code OR m.name LIKE :search_name)";
                 }
                 
                 $query = "SELECT m.id as member_id, m.member_code, m.name, m.{$joinDateColumn} AS join_date, 
@@ -80,7 +80,7 @@ try {
                 $searchParam = '%' . $search . '%';
                 
                 if (!empty($search)) {
-                    $whereClause .= " AND (m.member_code LIKE :search OR m.name LIKE :search OR p.invoice_number LIKE :search)";
+                    $whereClause .= " AND (m.member_code LIKE :search_code OR m.name LIKE :search_name OR p.invoice_number LIKE :search_invoice)";
                 }
                 
                 if ($status) {
@@ -100,7 +100,8 @@ try {
             if ($defaulters) {
                 $stmt->bindValue(':one_month_ago', $oneMonthAgo, PDO::PARAM_STR);
                 if (!empty($search)) {
-                    $stmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+                    $stmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+                    $stmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
                 }
                 if ($status) {
                     $stmt->bindValue(':status', $status, PDO::PARAM_STR);
@@ -109,7 +110,9 @@ try {
                 $stmt->bindValue(':month', (int)$month, PDO::PARAM_INT);
                 $stmt->bindValue(':year', (int)$year, PDO::PARAM_INT);
                 if (!empty($search)) {
-                    $stmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+                    $stmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+                    $stmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
+                    $stmt->bindValue(':search_invoice', $searchParam, PDO::PARAM_STR);
                 }
                 if ($status) {
                     $stmt->bindValue(':status', $status, PDO::PARAM_STR);
@@ -141,7 +144,8 @@ try {
             if ($defaulters) {
                 $countStmt->bindValue(':one_month_ago', $oneMonthAgo, PDO::PARAM_STR);
                 if (!empty($search)) {
-                    $countStmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+                    $countStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+                    $countStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
                 }
                 if ($status) {
                     $countStmt->bindValue(':status', $status, PDO::PARAM_STR);
@@ -150,7 +154,9 @@ try {
                 $countStmt->bindValue(':month', (int)$month, PDO::PARAM_INT);
                 $countStmt->bindValue(':year', (int)$year, PDO::PARAM_INT);
                 if (!empty($search)) {
-                    $countStmt->bindValue(':search', $searchParam, PDO::PARAM_STR);
+                    $countStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
+                    $countStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
+                    $countStmt->bindValue(':search_invoice', $searchParam, PDO::PARAM_STR);
                 }
                 if ($status) {
                     $countStmt->bindValue(':status', $status, PDO::PARAM_STR);
