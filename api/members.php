@@ -40,6 +40,7 @@ try {
                 'sort_dir' => $_GET['sort_dir'] ?? null,
             ];
 
+            $member->syncAllActivityStatuses();
             $result = $member->getAll($page, $limit, $search, $status, $filters);
             echo json_encode([
                 'success' => true,
@@ -56,6 +57,7 @@ try {
         case 'get':
             $id = $_GET['id'] ?? null;
             if ($id) {
+                $member->syncActivityStatus($id);
                 $data = $member->getById($id);
                 if ($data) {
                     echo json_encode(['success' => true, 'data' => $data]);
@@ -73,6 +75,10 @@ try {
             $code = $_GET['code'] ?? null;
             if ($code) {
                 $data = $member->getByCode($code);
+                if ($data && isset($data['id'])) {
+                    $member->syncActivityStatus((int)$data['id']);
+                    $data = $member->getById((int)$data['id']);
+                }
                 if ($data) {
                     echo json_encode(['success' => true, 'data' => $data]);
                 } else {
@@ -89,6 +95,10 @@ try {
             $rfidUid = $_GET['rfid_uid'] ?? null;
             if ($rfidUid) {
                 $data = $member->getByRfidUid($rfidUid);
+                if ($data && isset($data['id'])) {
+                    $member->syncActivityStatus((int)$data['id']);
+                    $data = $member->getById((int)$data['id']);
+                }
                 if ($data) {
                     echo json_encode(['success' => true, 'data' => $data]);
                 } else {

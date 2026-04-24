@@ -4,39 +4,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Member Profile - Women - Gym System</title>
+    <title>Member Profile - Women</title>
 
     <link rel="stylesheet" href="assets/css/member-profile.css">
     <style>
         :root {
-            --primary-color: #e91e63;
-            --secondary-color: #333;
-            --success-color: #28a745;
-            --error-color: #dc3545;
-            --bg-color: #0a0e27;
-            --border-color: #2d3748;
-            --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
+            --primary-color: #166534;
+            --secondary-color: #14291c;
+            --success-color: #0369a1;
+            --error-color: #dc2626;
+            --bg-color: #f3f7f4;
+            --border-color: #bbf7d0;
+            --shadow: 0 8px 24px rgba(20, 41, 28, 0.08);
+            --shadow-lg: 0 16px 40px rgba(20, 41, 28, 0.14);
         }
 
         body {
             margin: 0;
-            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f1419 100%);
+            background: #f3f7f4;
             background-attachment: fixed;
             font-family: "Poppins", sans-serif;
-            color: #ffffff;
+            color: #14291c;
         }
 
         .loading,
         .error {
             text-align: center;
-            color: #d1d5db;
+            color: #4b7a5e;
         }
 
         .error {
             color: var(--error-color);
-            background: rgba(220, 53, 69, 0.1);
-            border: 1px solid var(--error-color);
+            background: rgba(220, 38, 38, 0.08);
+            border: 1px solid rgba(220, 38, 38, 0.22);
             border-radius: 10px;
             margin: 1rem;
         }
@@ -50,27 +50,27 @@
         }
 
         .status-badge.status-active {
-            background: rgba(40, 167, 69, 0.2);
-            color: #28a745;
-            border: 1px solid #28a745;
+            background: rgba(3, 105, 161, 0.08);
+            color: #0369a1;
+            border: 1px solid #0369a1;
         }
 
         .status-badge.status-inactive {
-            background: rgba(220, 53, 69, 0.2);
-            color: #dc3545;
-            border: 1px solid #dc3545;
+            background: rgba(220, 38, 38, 0.08);
+            color: #dc2626;
+            border: 1px solid #dc2626;
         }
 
         .status-badge.status-completed {
-            background: rgba(40, 167, 69, 0.2);
-            color: #28a745;
-            border: 1px solid #28a745;
+            background: rgba(3, 105, 161, 0.08);
+            color: #0369a1;
+            border: 1px solid #0369a1;
         }
 
         .status-badge.status-pending {
-            background: rgba(255, 193, 7, 0.2);
-            color: #ffc107;
-            border: 1px solid #ffc107;
+            background: rgba(180, 83, 9, 0.08);
+            color: #b45309;
+            border: 1px solid #b45309;
         }
     </style>
     <style>
@@ -96,15 +96,15 @@
     <!-- Lookup -->
     <div class="lookup-bar">
         <div class="lookup-container">
-            <input id="memberCodeInput" class="lookup-input" placeholder="Enter Member Code, Email, Phone, or Name">
-            <button id="lookupBtn" class="btn">Lookup</button>
+            <input id="memberCodeInput" class="lookup-input" placeholder="Search by member code, phone, email, or name">
+            <button id="lookupBtn" class="btn">Open Profile</button>
         </div>
     </div>
 
     <!-- Profile -->
     <div class="member-content">
         <div id="memberContent">
-            <div class="loading">Enter a member code to view profile…</div>
+            <div class="loading">Search for a member to open the profile.</div>
         </div>
     </div>
 

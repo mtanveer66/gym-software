@@ -237,8 +237,11 @@ class Member {
     public function syncActivityStatus($id): array {
         $query = "UPDATE {$this->table}
                   SET status = CASE
-                      WHEN COALESCE(total_due_amount, 0) > 0
-                           AND COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+                      WHEN COALESCE(total_due_amount, 0) <= 0 THEN 'active'
+                      WHEN COALESCE(monthly_fee, 0) > 0
+                           AND COALESCE(total_due_amount, 0) >= (COALESCE(monthly_fee, 0) * 2) - 0.01
+                      THEN 'inactive'
+                      WHEN COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
                       THEN 'inactive'
                       ELSE 'active'
                   END
@@ -264,8 +267,11 @@ class Member {
     public function syncAllActivityStatuses(): array {
         $query = "UPDATE {$this->table}
                   SET status = CASE
-                      WHEN COALESCE(total_due_amount, 0) > 0
-                           AND COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+                      WHEN COALESCE(total_due_amount, 0) <= 0 THEN 'active'
+                      WHEN COALESCE(monthly_fee, 0) > 0
+                           AND COALESCE(total_due_amount, 0) >= (COALESCE(monthly_fee, 0) * 2) - 0.01
+                      THEN 'inactive'
+                      WHEN COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
                       THEN 'inactive'
                       ELSE 'active'
                   END";

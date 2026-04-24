@@ -93,6 +93,18 @@ function setupNavigation() {
     });
 }
 
+function renderSectionGuideCard({ chip = 'Quick Help', title, description, steps = [], actions = '' }) {
+    return `
+        <div class="section-guide">
+            <span class="page-chip">${chip}</span>
+            <h2>${title}</h2>
+            <p>${description}</p>
+            ${steps.length ? `<ul class="helper-list">${steps.map(step => `<li>${step}</li>`).join('')}</ul>` : ''}
+            ${actions ? `<div class="quick-actions-bar">${actions}</div>` : ''}
+        </div>
+    `;
+}
+
 function stopSectionAutoRefresh() {
     if (sectionRefreshInterval) {
         clearInterval(sectionRefreshInterval);
@@ -153,20 +165,20 @@ function switchSection(section) {
 
     // Update page title
     const titles = {
-        'dashboard': 'Dashboard',
+        'dashboard': 'Home Dashboard',
         'members': 'Members',
-        'attendance': 'Attendance',
+        'attendance': 'Check In / Out',
         'payments': 'Payments',
-        'due-fees': 'Due Fees Management',
-        'expenses': 'Expenses Management',
+        'due-fees': 'Members Who Need to Pay',
+        'expenses': 'Money Spent',
         'reports': 'Reports',
-        'import': 'Import Members',
-        'sync': 'Sync Data',
+        'import': 'Import / Download',
+        'sync': 'Sync / Backup',
         'reminders': 'WhatsApp Reminders'
     };
     const pageTitle = document.getElementById('pageTitle');
     if (pageTitle) {
-        pageTitle.textContent = titles[section] || 'Dashboard';
+        pageTitle.textContent = titles[section] || 'Home';
     }
 
     // Load section content
@@ -226,14 +238,24 @@ function loadReminders() {
 
     contentBody.innerHTML = `
         <div class="section-card">
+            ${renderSectionGuideCard({
+                chip: 'Reminder Help',
+                title: 'Prepare WhatsApp fee reminders',
+                description: 'Use this when you want to prepare due or overdue reminder entries for members.',
+                steps: [
+                    'Prepare Due Reminders for upcoming dues.',
+                    'Prepare Overdue Reminders for late payments.',
+                    'Check the pending list after creating reminders.'
+                ]
+            })}
             <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
                 <div>
                     <h2>WhatsApp Reminders</h2>
-                    <p>Queue fee due and overdue reminders for active members.</p>
+                    <p>Prepare fee due and overdue reminders for active members.</p>
                 </div>
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-                    <button class="btn btn-primary" onclick="queueFeeReminders('fee_due')">Queue Due Reminders</button>
-                    <button class="btn btn-warning" onclick="queueFeeReminders('fee_overdue')">Queue Overdue Reminders</button>
+                    <button class="btn btn-primary" onclick="queueFeeReminders('fee_due')">Prepare Due Reminders</button>
+                    <button class="btn btn-warning" onclick="queueFeeReminders('fee_overdue')">Prepare Overdue Reminders</button>
                 </div>
             </div>
             <div id="reminderStats" style="margin-top:1rem;">Loading reminder stats...</div>
@@ -412,6 +434,23 @@ function renderDashboard(data) {
     const total = data.total || { members: 0, active: 0 };
 
     const html = `
+        ${renderSectionGuideCard({
+            chip: 'Start Here',
+            title: 'What do you want to do right now?',
+            description: 'Use these big shortcuts first. This page is made for quick front-desk work.',
+            steps: [
+                'Add a new member if someone is joining today.',
+                'Take payment when someone pays at the desk.',
+                'Open the due list to see who still needs to pay.',
+                'Use Check In / Out when a member enters or leaves.'
+            ],
+            actions: `
+                <button class="btn btn-primary quick-action-btn" onclick="switchSection('members'); setTimeout(() => document.getElementById('addMemberBtn')?.click(), 150);">Add New Member</button>
+                <button class="btn btn-success quick-action-btn" onclick="switchSection('payments'); setTimeout(() => document.getElementById('addPaymentBtn')?.click(), 150);">Take Payment</button>
+                <button class="btn btn-warning quick-action-btn" onclick="switchSection('due-fees')">Open Due List</button>
+                <button class="btn btn-secondary quick-action-btn" onclick="switchSection('attendance')">Check In / Out</button>
+            `
+        })}
         <div class="dashboard-stats">
             <div class="stat-card">
                 <h3>Total Members</h3>
@@ -477,40 +516,40 @@ function renderDashboard(data) {
             </div>
         </div>
         <div class="dashboard-stats" style="margin-top: 1.5rem;">
-            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%,rgba(172, 81, 149, 0.32) 100%); color: white;">
-                <h3 style="color: rgba(255,255,255,0.9);">💰 This Month Income (Intake)</h3>
-                <p class="stat-value" style="color: white; font-size: 2rem;">${Utils.formatCurrency(currentMonth.revenue || 0)}</p>
-                <small style="color: rgba(255,255,255,0.8);">Total payments received</small>
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0;">
+                <h3 style="color: #166534;">💰 Money Received This Month</h3>
+                <p class="stat-value" style="color: #166534; font-size: 2rem;">${Utils.formatCurrency(currentMonth.revenue || 0)}</p>
+                <small style="color: #4b7a5e;">Total payments received</small>
             </div>
-            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
-                <h3 style="color: rgba(255,255,255,0.9);">💸 This Month Expenses (Outgoing)</h3>
-                <p class="stat-value" style="color: white; font-size: 2rem;">${Utils.formatCurrency(currentMonth.expenses || 0)}</p>
-                <small style="color: rgba(255,255,255,0.8);">Total expenses paid</small>
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0;">
+                <h3 style="color: #b45309;">💸 Money Spent This Month</h3>
+                <p class="stat-value" style="color: #b45309; font-size: 2rem;">${Utils.formatCurrency(currentMonth.expenses || 0)}</p>
+                <small style="color: #4b7a5e;">Total expenses paid</small>
             </div>
-            <div class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white;">
-                <h3 style="color: rgba(255,255,255,0.9);">📊 This Month Net Profit</h3>
-                <p class="stat-value" style="color: white; font-size: 2rem;">${Utils.formatCurrency(currentMonth.profit || 0)}</p>
-                <small style="color: rgba(255,255,255,0.8);">${(currentMonth.profit || 0) >= 0 ? '✅ Profit' : '❌ Loss'}</small>
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0;">
+                <h3 style="color: #0369a1;">📊 Profit This Month</h3>
+                <p class="stat-value" style="color: #0369a1; font-size: 2rem;">${Utils.formatCurrency(currentMonth.profit || 0)}</p>
+                <small style="color: #4b7a5e;">${(currentMonth.profit || 0) >= 0 ? '✅ Profit' : '❌ Loss'}</small>
             </div>
-            <div class="stat-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white;">
-                <h3 style="color: rgba(255,255,255,0.9);">📈 All Time Summary</h3>
-                <p class="stat-value" style="color: white; font-size: 1.5rem;">${Utils.formatCurrency(allTime.net_profit || 0)}</p>
-                <small style="color: rgba(255,255,255,0.8);">
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0;">
+                <h3 style="color: #166534;">📈 Overall Total</h3>
+                <p class="stat-value" style="color: #166534; font-size: 1.5rem;">${Utils.formatCurrency(allTime.net_profit || 0)}</p>
+                <small style="color: #4b7a5e;">
                     <div style="margin-top: 0.5rem;">Income: ${Utils.formatCurrency(allTime.revenue || 0)}</div>
                     <div>Expenses: ${Utils.formatCurrency(allTime.expenses || 0)}</div>
                 </small>
             </div>
         </div>
         <div class="dashboard-stats" style="margin-top: 1.5rem;">
-            <div class="stat-card" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; cursor: pointer;" onclick="forceOpenGate('checkin')">
-                <h3 style="color: rgba(255,255,255,0.9);">🚪 Force Open Check-In Gate</h3>
-                <p class="stat-value" style="color: white; font-size: 1.5rem;">Click to Open</p>
-                <small style="color: rgba(255,255,255,0.8);">Manually open check-in gate</small>
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0; cursor: pointer;" onclick="forceOpenGate('checkin')">
+                <h3 style="color: #166534;">🚪 Open Entry Gate Manually</h3>
+                <p class="stat-value" style="color: #166534; font-size: 1.5rem;">Click to Open</p>
+                <small style="color: #4b7a5e;">Manually open check-in gate</small>
             </div>
-            <div class="stat-card" style="background: linear-gradient(135deg, #30cfd0 0%, #330867 100%); color: white; cursor: pointer;" onclick="forceOpenGate('checkout')">
-                <h3 style="color: rgba(255,255,255,0.9);">🚪 Force Open Check-Out Gate</h3>
-                <p class="stat-value" style="color: white; font-size: 1.5rem;">Click to Open</p>
-                <small style="color: rgba(255,255,255,0.8);">Manually open check-out gate</small>
+            <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0; cursor: pointer;" onclick="forceOpenGate('checkout')">
+                <h3 style="color: #0369a1;">🚪 Open Exit Gate Manually</h3>
+                <p class="stat-value" style="color: #0369a1; font-size: 1.5rem;">Click to Open</p>
+                <small style="color: #4b7a5e;">Manually open check-out gate</small>
             </div>
         </div>
         <div class="dashboard-recent">
@@ -592,17 +631,27 @@ function forceOpenGate(gateType) {
 function loadMembers() {
     const html = `
         <div class="members-section">
+            ${renderSectionGuideCard({
+                chip: 'Members Help',
+                title: 'Add, search, or update a member',
+                description: 'If someone is standing at the desk, first search by code, name, or phone. If not found, add them as a new member.',
+                steps: [
+                    'Use the search box to find an existing member.',
+                    'Use Active only or Inactive only if the list looks too long.',
+                    'Click Take Fee if you want to update dues quickly.'
+                ]
+            })}
             <div class="section-header">
                 <div class="gender-tabs">
                     <button class="gender-tab ${currentGender === 'men' ? 'active' : ''}" data-gender="men">Men Members</button>
                     <button class="gender-tab ${currentGender === 'women' ? 'active' : ''}" data-gender="women">Women Members</button>
                 </div>
                 <div class="section-actions">
-                    <input type="text" id="memberSearch" placeholder="Search members..." class="search-input">
-                    <button class="btn ${memberStatusFilter === 'active' ? 'btn-primary' : 'btn-secondary'}" id="activeOnlyBtn">Active</button>
-                    <button class="btn ${memberStatusFilter === 'inactive' ? 'btn-primary' : 'btn-secondary'}" id="inactiveOnlyBtn">Inactive</button>
-                    <button class="btn ${memberStatusFilter === null ? 'btn-primary' : 'btn-secondary'}" id="allMembersBtn">All</button>
-                    <button class="btn btn-primary" id="addMemberBtn">Add Member</button>
+                    <input type="text" id="memberSearch" placeholder="Search by code, name, phone, email, or card" class="search-input">
+                    <button class="btn ${memberStatusFilter === 'active' ? 'btn-primary' : 'btn-secondary'}" id="activeOnlyBtn">Active only</button>
+                    <button class="btn ${memberStatusFilter === 'inactive' ? 'btn-primary' : 'btn-secondary'}" id="inactiveOnlyBtn">Inactive only</button>
+                    <button class="btn ${memberStatusFilter === null ? 'btn-primary' : 'btn-secondary'}" id="allMembersBtn">Show all</button>
+                    <button class="btn btn-primary" id="addMemberBtn">Add New Member</button>
                 </div>
             </div>
             <div id="membersTableContainer"></div>
@@ -738,7 +787,7 @@ function renderMembersTable(members, pagination) {
                     </tr>
                 </thead>
                 <tbody>
-                    ${members.map((m, idx) => `
+                    ${members.length > 0 ? members.map((m, idx) => `
                         <tr>
                             <td data-label="#">${startIndex + idx + 1}</td>
                             <td data-label="Code">${m.member_code}</td>
@@ -749,13 +798,22 @@ function renderMembersTable(members, pagination) {
                             <td data-label="Due Amount">${m.total_due_amount > 0 ? `<span style="color: red; font-weight: bold;">${Utils.formatCurrency(m.total_due_amount)}</span>` : '<span style="color: green;">No Due</span>'}</td>
                             <td data-label="Status"><span class="status-badge status-${m.status}">${m.status}</span></td>
                             <td data-label="Actions">
-                                <button class="btn btn-sm btn-secondary" onclick="openMemberProfile('${m.member_code}', '${currentGender}')">View Profile</button>
+                                <button class="btn btn-sm btn-secondary" onclick="openMemberProfile('${m.member_code}', '${currentGender}')">Open</button>
                                 <button class="btn btn-sm btn-primary" onclick="editMember(${m.id})">Edit</button>
-                                <button class="btn btn-sm btn-success" onclick="updateFee(${m.id}, '${m.member_code}')">Update Fee</button>
+                                <button class="btn btn-sm btn-success" onclick="updateFee(${m.id}, '${m.member_code}')">Take Fee</button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteMember(${m.id})">Delete</button>
                             </td>
                         </tr>
-                    `).join('')}
+                    `).join('') : `
+                        <tr>
+                            <td colspan="9">
+                                <div class="empty-state">
+                                    <strong>No members found</strong>
+                                    Try changing the search or filter. If this is a new person, click <em>Add New Member</em>.
+                                </div>
+                            </td>
+                        </tr>
+                    `}
                 </tbody>
             </table>
         </div>
@@ -777,47 +835,48 @@ function showAddMemberForm() {
         <div class="modal" id="memberModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Add Member</h2>
+                    <h2>Add New Member</h2>
                     <button class="modal-close" onclick="closeMemberModal()">&times;</button>
                 </div>
                 <form id="memberForm" class="modal-body">
                     <input type="hidden" id="memberId" name="id">
+                    <div class="simple-note"><strong>Tip:</strong> Start with code, name, phone, join date, and monthly fee. Other fields can be filled later.</div>
                     <div class="form-group">
-                        <label>Member Code (Ac_No) *</label>
-                        <input type="text" id="memberCode" name="member_code" required>
+                        <label>Member Code / Account No. *</label>
+                        <input type="text" id="memberCode" name="member_code" placeholder="Example: M001" required>
                     </div>
                         <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" id="memberName" name="name" required>
+                        <label>Full Name *</label>
+                        <input type="text" id="memberName" name="name" placeholder="Enter member name" required>
                     </div>
                     <div class="form-group">
                         <label>Phone *</label>
-                        <input type="text" id="phone" name="phone" required>
+                        <input type="text" id="phone" name="phone" placeholder="03XXXXXXXXX" required>
                     </div>
                     <div class="form-group">
-                        <label>RFID Card UID</label>
+                        <label>RFID / Membership Card (optional)</label>
                         <div style="display: flex; gap: 10px;">
-                            <input type="text" id="rfidUid" name="rfid_uid" placeholder="Scan or enter RFID card UID" style="flex: 1;">
+                            <input type="text" id="rfidUid" name="rfid_uid" placeholder="Scan or type card number" style="flex: 1;">
                             <button type="button" class="btn btn-secondary" onclick="startRFIDScan()" id="scanRfidBtn">
-                                <i class="fas fa-wifi"></i> Scan
+                                <i class="fas fa-wifi"></i> Scan Card
                             </button>
                         </div>
-                        <small id="scanStatus">Assign an RFID card to this member for gate automation (linked to this member code)</small>
+                        <small id="scanStatus">Optional. Use this only if the member has a card for gate entry.</small>
                     </div>
                     <div class="form-group">
                         <label>Email</label>
-                        <input type="email" id="email" name="email">
+                        <input type="email" id="email" name="email" placeholder="Optional email address">
                     </div>
                     <div class="form-group">
                         <label>Address</label>
-                        <textarea id="address" name="address"></textarea>
+                        <textarea id="address" name="address" placeholder="Optional address"></textarea>
                     </div>
                     <div class="form-group">
                         <label>Profile Picture</label>
                         <div style="display: flex; gap: 10px; align-items: center;">
                             <input type="file" id="profileImage" name="profile_image" accept="image/*" style="flex: 1;">
                             <button type="button" class="btn btn-secondary" onclick="startCamera()" style="display: flex; align-items: center; gap: 5px;">
-                                <i class="fas fa-camera"></i> Capture
+                                <i class="fas fa-camera"></i> Take Photo
                             </button>
                         </div>
                         <small>Accepted formats: JPG, PNG, GIF, WebP (Max 5MB)</small>
@@ -845,7 +904,7 @@ function showAddMemberForm() {
                             <input type="number" step="0.01" id="admissionFee" name="admission_fee" value="0">
                         </div>
                         <div class="form-group">
-                            <label>Monthly Fee</label>
+                            <label>Monthly Fee *</label>
                             <input type="number" step="0.01" id="monthlyFee" name="monthly_fee" value="0">
                         </div>
                         <div class="form-group">
@@ -866,7 +925,7 @@ function showAddMemberForm() {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeMemberModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="submit" class="btn btn-primary">Save Member</button>
                     </div>
                 </form>
             </div>
@@ -1088,7 +1147,7 @@ function editMember(id) {
                 }
 
                 // Update modal title
-                document.querySelector('#memberModal .modal-header h2').textContent = 'Edit Member';
+                document.querySelector('#memberModal .modal-header h2').textContent = 'Edit Member Details';
             }
         });
 }
@@ -1124,14 +1183,24 @@ function openMemberProfile(memberCode, gender) {
 function loadAttendance() {
     const html = `
         <div class="attendance-section">
+            ${renderSectionGuideCard({
+                chip: 'Attendance Help',
+                title: 'Check members in or out',
+                description: 'Type the member code and press the button. The system will find the member in either men or women automatically.',
+                steps: [
+                    'Type member code exactly as written on the card or account slip.',
+                    'Press Check In Member or hit Enter.',
+                    'Use the Check Out button in the list when the member leaves.'
+                ]
+            })}
             <div class="section-header">
                 <div class="gender-tabs">
                     <button class="gender-tab ${currentGender === 'men' ? 'active' : ''}" data-gender="men">Men</button>
                     <button class="gender-tab ${currentGender === 'women' ? 'active' : ''}" data-gender="women">Women</button>
                 </div>
                 <div class="section-actions">
-                    <input type="text" id="attendanceMemberCode" placeholder="Enter Member Code" class="search-input">
-                    <button class="btn btn-primary" id="checkInBtn">Check In</button>
+                    <input type="text" id="attendanceMemberCode" placeholder="Type member code here" class="search-input">
+                    <button class="btn btn-primary" id="checkInBtn">Check In Member</button>
                 </div>
             </div>
             <div id="attendanceTableContainer"></div>
@@ -1244,7 +1313,7 @@ function handleCheckIn() {
                 })
                 .then(result => {
                     if (result.success) {
-                        Utils.showNotification('Check-in recorded successfully', 'success');
+                        Utils.showNotification('Member checked in successfully.', 'success');
                         document.getElementById('attendanceMemberCode').value = '';
                         loadAttendanceTable();
                     } else {
@@ -1360,7 +1429,7 @@ function checkOut(attendanceId) {
         })
         .then(data => {
             if (data.success) {
-                Utils.showNotification('Check-out recorded successfully', 'success');
+                Utils.showNotification('Member checked out successfully.', 'success');
                 loadAttendanceTable();
             } else {
                 Utils.showNotification(data.message || 'Failed to record check-out', 'error');
@@ -1383,16 +1452,26 @@ let expensesSelectedYear = new Date().getFullYear();
 function loadPayments() {
     const html = `
         <div class="payments-section">
+            ${renderSectionGuideCard({
+                chip: 'Payments Help',
+                title: 'Record money received or review late payers',
+                description: 'Use Take Payment for someone paying now. Use Show Late Payers only when you want to see members with unpaid dues.',
+                steps: [
+                    'Search by member code or name if the list is long.',
+                    'Keep This Month selected for daily front-desk work.',
+                    'Switch to Older Payments only when you need past records.'
+                ]
+            })}
             <div class="section-header">
                 <div class="gender-tabs">
                     <button class="gender-tab ${currentGender === 'men' ? 'active' : ''}" data-gender="men">Men</button>
                     <button class="gender-tab ${currentGender === 'women' ? 'active' : ''}" data-gender="women">Women</button>
                 </div>
                 <div class="section-actions">
-                    <input type="text" id="paymentSearch" placeholder="Search by member code, name, invoice..." class="search-input">
+                    <input type="text" id="paymentSearch" placeholder="Search by member code, name, or invoice" class="search-input">
                     <div style="display: flex; gap: 0.5rem; align-items: center;">
-                        <button class="btn ${paymentsViewMode === 'current' ? 'btn-primary' : 'btn-secondary'}" id="viewCurrentBtn">Current Month</button>
-                        <button class="btn ${paymentsViewMode === 'history' ? 'btn-primary' : 'btn-secondary'}" id="viewHistoryBtn">View History</button>
+                        <button class="btn ${paymentsViewMode === 'current' ? 'btn-primary' : 'btn-secondary'}" id="viewCurrentBtn">This Month</button>
+                        <button class="btn ${paymentsViewMode === 'history' ? 'btn-primary' : 'btn-secondary'}" id="viewHistoryBtn">Older Payments</button>
                     </div>
                     <div id="historySelector" style="display: ${paymentsViewMode === 'history' ? 'flex' : 'none'}; gap: 0.5rem; align-items: center; margin-left: 0.5rem;">
                         <select id="paymentMonth" class="search-input" style="width: auto;">
@@ -1410,9 +1489,9 @@ function loadPayments() {
                         </select>
                         <button class="btn btn-primary" id="loadHistoryBtn">Load</button>
                     </div>
-                    <button class="btn ${paymentsDefaultersFilter ? 'btn-warning' : 'btn-secondary'}" id="showDefaultersBtn">Show Defaulters</button>
+                    <button class="btn ${paymentsDefaultersFilter ? 'btn-warning' : 'btn-secondary'}" id="showDefaultersBtn">Show Late Payers</button>
                     <button class="btn ${memberStatusFilter === 'inactive' ? 'btn-primary' : 'btn-secondary'}" id="showInactivePaymentsBtn">Inactive Members</button>
-                    <button class="btn btn-primary" id="addPaymentBtn">Record Payment</button>
+                    <button class="btn btn-primary" id="addPaymentBtn">Take Payment</button>
                 </div>
             </div>
             <div id="paymentsTableContainer"></div>
@@ -1488,11 +1567,11 @@ function loadPayments() {
             if (paymentsDefaultersFilter) {
                 showDefaultersBtn.classList.remove('btn-secondary');
                 showDefaultersBtn.classList.add('btn-warning');
-                showDefaultersBtn.textContent = 'Show Regular Payments';
+                showDefaultersBtn.textContent = 'Back to Payment List';
             } else {
                 showDefaultersBtn.classList.remove('btn-warning');
                 showDefaultersBtn.classList.add('btn-secondary');
-                showDefaultersBtn.textContent = 'Show Defaulters';
+                showDefaultersBtn.textContent = 'Show Late Payers';
             }
             loadPaymentsTable(1);
         });
@@ -1523,16 +1602,17 @@ function showAddPaymentForm() {
         <div class="modal" id="paymentModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Record Payment</h2>
+                    <h2>Take Payment</h2>
                     <button class="modal-close" onclick="closePaymentModal()">&times;</button>
                 </div>
                 <form id="paymentForm" class="modal-body">
+                    <div class="simple-note"><strong>Tip:</strong> Type member code first, then enter how much money you received.</div>
                     <div class="form-group">
-                        <label>Member Code *</label>
-                        <input type="text" id="paymentMemberCode" name="member_code" required>
+                        <label>Member Code / Account No. *</label>
+                        <input type="text" id="paymentMemberCode" name="member_code" placeholder="Example: M001" required>
                     </div>
                     <div class="form-group">
-                        <label>Amount *</label>
+                        <label>Amount Received *</label>
                         <input type="number" step="0.01" id="paymentAmount" name="amount" required>
                     </div>
                     <div class="form-row">
@@ -1558,7 +1638,7 @@ function showAddPaymentForm() {
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Received By</label>
+                            <label>Staff Name</label>
                             <select id="paymentReceivedBy" name="received_by">
                                 <option value="Admin One">Admin One</option>
                                 <option value="Admin Two">Admin Two</option>
@@ -1574,7 +1654,7 @@ function showAddPaymentForm() {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closePaymentModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="submit" class="btn btn-primary">Save Payment</button>
                     </div>
                 </form>
             </div>
@@ -1695,8 +1775,8 @@ function loadPaymentsTable(page = 1) {
                     // Defaulters view
                     html = `
                         <div style="margin-bottom: 1rem;">
-                            <h3>Defaulters (Active members not paid for 1+ month)</h3>
-                            <p>Total Defaulters: ${data.pagination.total}</p>
+                            <h3>Late Payers</h3>
+                            <p>Members not paid for 1 month or more: ${data.pagination.total}</p>
                         </div>
                         <table class="data-table">
                             <thead>
@@ -1726,7 +1806,7 @@ function loadPaymentsTable(page = 1) {
                                         <td data-label="Status"><span class="status-badge status-${p.status}">${p.status}</span></td>
                                     </tr>
                                 `;
-                    }).join('') : '<tr><td colspan="7" style="text-align: center;">No defaulters found</td></tr>'}
+                    }).join('') : '<tr><td colspan="8" style="text-align: center;"><div class="empty-state"><strong>No late payers found</strong>Everyone in this view is up to date right now.</div></td></tr>'}
                             </tbody>
                         </table>
                     `;
@@ -1737,7 +1817,7 @@ function loadPaymentsTable(page = 1) {
                     html = `
                         <div style="margin-bottom: 1rem;">
                             <h3>Payments for ${monthNames[data.month - 1]} ${data.year}</h3>
-                            <p>Total Payments: ${data.pagination.total}</p>
+                            <p>Total payment records: ${data.pagination.total}</p>
                         </div>
                         <table class="data-table">
                             <thead>
@@ -1773,7 +1853,7 @@ function loadPaymentsTable(page = 1) {
                                         <td data-label="Status"><span class="status-badge status-${p.status}">${p.status}</span></td>
                                     </tr>
                                 `;
-                    }).join('') : '<tr><td colspan="8" style="text-align: center;">No payments found for this month</td></tr>'}
+                    }).join('') : '<tr><td colspan="11" style="text-align: center;"><div class="empty-state"><strong>No payments found</strong>No payment record matches this month or search.</div></td></tr>'}
                             </tbody>
                         </table>
                     `;
@@ -1796,14 +1876,14 @@ function loadPaymentsTable(page = 1) {
 
                 container.innerHTML = html;
             } else {
-                container.innerHTML = '<div class="error">Failed to load payments: ' + (data?.message || 'Unknown error') + '</div>';
+                container.innerHTML = '<div class="error">Could not load payments: ' + (data?.message || 'Unknown error') + '</div>';
             }
         })
         .catch(err => {
             console.error('Payments error:', err);
             const container = document.getElementById('paymentsTableContainer');
             if (container) {
-                container.innerHTML = `<div class="error">Error loading payments: ${err.message}</div>`;
+                container.innerHTML = `<div class="error">Could not load payments: ${err.message}</div>`;
             }
         });
 }
@@ -1825,7 +1905,7 @@ function showUpdateFeeForm(member) {
         <div class="modal" id="updateFeeModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Update Fee - ${member.member_code}</h2>
+                    <h2>Receive Fee / Update Dues - ${member.member_code}</h2>
                     <button class="modal-close" onclick="closeUpdateFeeModal()">&times;</button>
                 </div>
                 <form id="updateFeeForm" class="modal-body">
@@ -1841,14 +1921,14 @@ function showUpdateFeeForm(member) {
                     </div>
                     ${member.total_due_amount > 0 ? `
                     <div class="form-group" style="background: rgba(255, 193, 7, 0.2); padding: 1rem; border-radius: 5px; border-left: 4px solid #ffc107;">
-                        <label><strong style="color: #ffc107;">⚠️ Previous Due Amount: ${Utils.formatCurrency(member.total_due_amount)}</strong></label>
+                        <label><strong style="color: #ffc107;">⚠️ Old unpaid amount: ${Utils.formatCurrency(member.total_due_amount)}</strong></label>
                         <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem; color: #ffc107;">
-                            This amount will be added to the monthly fee when payment is made.
+                            This unpaid amount is included in the full payment total below.
                         </p>
                     </div>
                     ` : ''}
                     <div class="form-group" style="background: rgba(33, 150, 243, 0.2); padding: 1rem; border-radius: 5px; border-left: 4px solid #2196F3;">
-                        <label><strong style="color: #2196F3;">Total Amount Due:</strong></label>
+                        <label><strong style="color: #2196F3;">Full amount to clear now:</strong></label>
                         <p style="margin: 0.5rem 0; font-size: 1.2rem; font-weight: bold; color: #64b5f6;">
                             ${Utils.formatCurrency((parseFloat(member.total_due_amount) || 0) + parseFloat(member.monthly_fee) || 0)} 
                             <small style="font-size: 0.9rem; font-weight: normal;">
@@ -1857,17 +1937,17 @@ function showUpdateFeeForm(member) {
                         </p>
                     </div>
                     <div class="form-group">
-                        <label>Amount to Pay *</label>
+                        <label>Amount Received *</label>
                         <input type="number" step="0.01" id="feeAmount" name="amount" value="${(parseFloat(member.total_due_amount) || 0) + parseFloat(member.monthly_fee) || 0}" required>
                         <small style="color: #d1d5db;">
                             ${member.total_due_amount > 0 ?
-            `Enter amount to pay. To pay in full, enter ${Utils.formatCurrency((parseFloat(member.total_due_amount) || 0) + parseFloat(member.monthly_fee) || 0)} (includes previous due + monthly fee). This full amount will be added to revenue.` :
-            'Enter the payment amount (default is monthly fee).'}
+            `To clear everything, enter ${Utils.formatCurrency((parseFloat(member.total_due_amount) || 0) + parseFloat(member.monthly_fee) || 0)}. This includes old unpaid amount plus this month's fee.` :
+            'Enter how much money you received. The default value is the monthly fee.'}
                         </small>
                     </div>
-                    <div id="paymentCalculation" style="background: rgba(37, 43, 74, 0.6); color: #ffffff; padding: 0.75rem; border-radius: 5px; margin-top: 0.5rem; font-size: 0.9rem; border: 1px solid var(--border-color);">
-                        <strong>Payment Breakdown:</strong>
-                        <div id="calcDetails" style="margin-top: 0.25rem; color: #d1d5db;">
+                    <div id="paymentCalculation" style="background: #f8fffb; color: #14291c; padding: 0.75rem; border-radius: 5px; margin-top: 0.5rem; font-size: 0.9rem; border: 1px solid var(--border-color);">
+                        <strong>Payment Summary:</strong>
+                        <div id="calcDetails" style="margin-top: 0.25rem; color: #4b7a5e;">
                             ${member.total_due_amount > 0 ?
             `Previous Due: ${Utils.formatCurrency(member.total_due_amount)}<br>
                                  Monthly Fee: ${Utils.formatCurrency(member.monthly_fee)}<br>
@@ -1878,11 +1958,11 @@ function showUpdateFeeForm(member) {
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="isPartialPayment" name="is_partial_payment">
-                            This is a partial payment (some amount will remain due)
+                            This is not full payment (some amount will stay unpaid)
                         </label>
                     </div>
                     <div class="form-group">
-                        <label>Received By *</label>
+                        <label>Staff Receiving Payment *</label>
                         <div style="display: flex; gap: 1rem; margin-top: 0.5rem;">
                             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                                 <input type="radio" name="received_by" value="Admin 1" required> Admin 1
@@ -1904,26 +1984,24 @@ function showUpdateFeeForm(member) {
                         </div>
                     </div>
                     <div class="form-group" id="dueAmountGroup" style="display: none;">
-                        <label>Remaining Due Amount *</label>
+                        <label>Amount Still Unpaid *</label>
                         <input type="number" step="0.01" id="dueAmount" name="due_amount" value="0" min="0">
-                        <small>Enter the amount that will remain due after this payment</small>
+                        <small>Enter the amount that will still remain unpaid after this payment.</small>
                     </div>
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="isDefaulterUpdate" name="is_defaulter_update">
-                            Update to new defaulter date (for fee defaulters)
+                            Set a new due date for this unpaid member
                         </label>
                     </div>
                     <div class="form-group" id="defaulterDateGroup" style="display: none;">
-                        <label>New Defaulter Date *</label>
+                        <label>New Due Date *</label>
                         <input type="date" id="newDefaulterDate" name="new_defaulter_date">
                     </div>
-                    <div class="form-group">
-                        <label>Note: Normal update calculates next fee date based on join date. Defaulter update uses the date you specify. Partial payment allows recording remaining due amount.</label>
-                    </div>
+                    <div class="simple-note"><strong>Note:</strong> Normal update moves the next fee date automatically. If you set a new due date manually, the date you choose will be used. Partial payment lets you keep some amount unpaid.</div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeUpdateFeeModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Update Fee</button>
+                        <button type="submit" class="btn btn-primary">Save Fee Update</button>
                     </div>
                 </form>
             </div>
@@ -2153,14 +2231,24 @@ function saveFeeUpdate() {
 function loadDueFees() {
     const html = `
         <div class="due-fees-section">
+            ${renderSectionGuideCard({
+                chip: 'Due List Help',
+                title: 'Members who still need to pay',
+                description: 'This page helps you find unpaid members fast. Use Update Due when someone pays at the desk or you want to correct dues.',
+                steps: [
+                    'Search by member code, name, or phone.',
+                    'Use the gender filter only if you want a shorter list.',
+                    'The red amount shows how much the member still owes.'
+                ]
+            })}
             <div class="section-header">
-                <h2>Due Fees Management</h2>
+                <h2>Members Who Need to Pay</h2>
                 <div class="section-actions">
-                    <input type="text" id="dueFeeSearch" placeholder="Search members..." class="search-input">
+                    <input type="text" id="dueFeeSearch" placeholder="Search by code, name, or phone" class="search-input">
                     <select id="dueFeeGenderFilter" class="search-input" style="width: auto;">
-                        <option value="all">All Genders</option>
-                        <option value="men">Men Only</option>
-                        <option value="women">Women Only</option>
+                        <option value="all">All</option>
+                        <option value="men">Men only</option>
+                        <option value="women">Women only</option>
                     </select>
                 </div>
             </div>
@@ -2283,7 +2371,7 @@ function renderDueFeesSummary(summary) {
 function renderDueFeesTable(members, pagination) {
     if (!members || members.length === 0) {
         document.getElementById('dueFeesTableContainer').innerHTML =
-            '<div class="info" style="padding: 2rem; text-align: center;">No members with due fees found.</div>';
+            '<div class="empty-state"><strong>No unpaid members found</strong>Good news. Nobody is showing as unpaid in the current filter.</div>';
         return;
     }
 
@@ -2320,7 +2408,7 @@ function renderDueFeesTable(members, pagination) {
                         <td data-label="Status"><span class="badge ${m.status === 'active' ? 'badge-success' : 'badge-secondary'}">${m.status}</span></td>
                         <td data-label="Actions">
                             <button class="btn btn-sm btn-primary" onclick="showUpdateDueFeeModal(${m.id}, '${m.gender}', ${m.total_due_amount || 0}, '${m.name}')">
-                                Update Due
+                                Receive / Update
                             </button>
                         </td>
                     </tr>
@@ -2349,7 +2437,7 @@ function showUpdateDueFeeModal(memberId, gender, currentDueAmount, memberName) {
         <div class="modal" id="updateDueFeeModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Update Due Fee - ${memberName}</h2>
+                    <h2>Update Unpaid Amount - ${memberName}</h2>
                     <button class="modal-close" onclick="closeUpdateDueFeeModal()">&times;</button>
                 </div>
                 <form id="updateDueFeeForm" class="modal-body">
@@ -2357,34 +2445,34 @@ function showUpdateDueFeeModal(memberId, gender, currentDueAmount, memberName) {
                     <input type="hidden" id="dueFeeGender" value="${gender}">
                     
                     <div class="form-group">
-                        <label>Current Due Amount:</label>
+                        <label>Current unpaid amount:</label>
                         <strong style="font-size: 1.2rem; color: #e74c3c;">${Utils.formatCurrency(currentDueAmount)}</strong>
                     </div>
                     
                     <div class="form-group">
-                        <label>Action *</label>
+                        <label>What do you want to do? *</label>
                         <select id="dueFeeAction" name="action" required>
-                            <option value="update">Set to Specific Amount</option>
-                            <option value="add">Add to Current Amount</option>
-                            <option value="clear">Clear All (Set to 0)</option>
+                            <option value="update">Set a new unpaid amount</option>
+                            <option value="add">Add more unpaid amount</option>
+                            <option value="clear">Clear all unpaid amount (set to 0)</option>
                         </select>
                     </div>
                     
                     <div class="form-group" id="dueFeeAmountGroup">
                         <label>Amount *</label>
                         <input type="number" step="0.01" id="dueFeeAmount" name="amount" value="${currentDueAmount}" min="0" required>
-                        <small>Enter the amount for the selected action</small>
+                        <small>Enter the amount for the option you selected above.</small>
                     </div>
                     
                     <div class="form-group">
-                        <div id="dueFeePreview" style="background: rgba(37, 43, 74, 0.6); color: #ffffff; padding: 1rem; border-radius: 5px; margin-top: 1rem; border: 1px solid var(--border-color);">
-                            <strong style="color: #ffffff;">Preview:</strong> <span style="color: #d1d5db;">New due amount will be: <span id="previewAmount" style="color: #ffffff; font-weight: bold;">${Utils.formatCurrency(currentDueAmount)}</span></span>
+                        <div id="dueFeePreview" style="background: #f8fffb; color: #14291c; padding: 1rem; border-radius: 5px; margin-top: 1rem; border: 1px solid var(--border-color);">
+                            <strong style="color: #166534;">Preview:</strong> <span style="color: #4b7a5e;">New unpaid amount will be: <span id="previewAmount" style="color: #14291c; font-weight: bold;">${Utils.formatCurrency(currentDueAmount)}</span></span>
                         </div>
                     </div>
                     
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeUpdateDueFeeModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Update Due Fee</button>
+                        <button type="submit" class="btn btn-primary">Save Unpaid Amount</button>
                     </div>
                 </form>
             </div>
@@ -2429,7 +2517,7 @@ function showUpdateDueFeeModal(memberId, gender, currentDueAmount, memberName) {
                 amountInput.placeholder = 'Amount to add';
             } else {
                 amountInput.value = currentDueAmount;
-                amountInput.placeholder = 'New due amount';
+                amountInput.placeholder = 'New unpaid amount';
             }
         }
         updatePreview();
@@ -2473,7 +2561,7 @@ function saveDueFeeUpdate() {
     })
         .then(async res => {
             if (!res.ok) {
-                let errorMessage = 'Failed to update due fee';
+                let errorMessage = 'Failed to update unpaid amount';
                 try {
                     const errorData = await res.json();
                     errorMessage = errorData.message || errorMessage;
@@ -2502,7 +2590,7 @@ function saveDueFeeUpdate() {
         })
         .then(data => {
             if (data.success) {
-                const message = data.message || 'Due fee updated successfully';
+                const message = data.message || 'Unpaid amount updated successfully';
                 if (data.payment_recorded) {
                     Utils.showNotification(message + ' Payment recorded in member profile.', 'success');
                 } else {
@@ -2527,12 +2615,12 @@ function saveDueFeeUpdate() {
                     }
                 }, 500);
             } else {
-                Utils.showNotification(data.message || 'Failed to update due fee', 'error');
+                Utils.showNotification(data.message || 'Failed to update unpaid amount', 'error');
             }
         })
         .catch(err => {
             console.error('Due fee update error:', err);
-            Utils.showNotification(err.message || 'Error updating due fee', 'error');
+            Utils.showNotification(err.message || 'Error updating unpaid amount', 'error');
         });
 }
 
@@ -2553,12 +2641,22 @@ function loadExpenses() {
 
     const html = `
         <div class="expenses-section">
+            ${renderSectionGuideCard({
+                chip: 'Expenses Help',
+                title: 'Record money spent by the gym',
+                description: 'Use this only when the gym pays money out, like rent, electricity, repairs, or supplies.',
+                steps: [
+                    'Use This Month for normal daily work.',
+                    'Search by what was paid for or by category.',
+                    'Add a short note so future staff understand the expense.'
+                ]
+            })}
             <div class="section-header">
-                <h2>Expenses Management</h2>
+                <h2>Money Spent</h2>
                 <div class="section-actions">
                     <div style="display: flex; gap: 0.5rem; align-items: center; margin-right: 0.5rem;">
-                        <button class="btn ${expensesViewMode === 'current' ? 'btn-primary' : 'btn-secondary'}" id="expenseViewCurrentBtn">Current Month</button>
-                        <button class="btn ${expensesViewMode === 'history' ? 'btn-primary' : 'btn-secondary'}" id="expenseViewHistoryBtn">View History</button>
+                        <button class="btn ${expensesViewMode === 'current' ? 'btn-primary' : 'btn-secondary'}" id="expenseViewCurrentBtn">This Month</button>
+                        <button class="btn ${expensesViewMode === 'history' ? 'btn-primary' : 'btn-secondary'}" id="expenseViewHistoryBtn">Older Expenses</button>
                     </div>
                     <div id="expenseHistorySelector" style="display: ${expensesViewMode === 'history' ? 'flex' : 'none'}; gap: 0.5rem; align-items: center; margin-right: 0.5rem;">
                         <select id="expenseMonth" class="search-input" style="width: auto;">
@@ -2576,9 +2674,9 @@ function loadExpenses() {
                         </select>
                         <button class="btn btn-primary" id="loadExpenseHistoryBtn">Load</button>
                     </div>
-                    <input type="text" id="expenseSearch" placeholder="Search expenses..." class="search-input">
+                    <input type="text" id="expenseSearch" placeholder="Search by paid item, note, or category" class="search-input">
                     <select id="expenseCategoryFilter" class="search-input" style="width: auto;">
-                        <option value="">All Categories</option>
+                        <option value="">All Groups</option>
                     </select>
                     <button class="btn btn-primary" id="addExpenseBtn">Add Expense</button>
                 </div>
@@ -2970,13 +3068,13 @@ function renderExpensesSummary(summary) {
     const html = `
         <div class="dashboard-stats">
             <div class="stat-card">
-                <h3>Total Expenses</h3>
+                <h3>Total Money Spent</h3>
                 <p style="font-size: 2rem; font-weight: bold; color: #e74c3c;">
                     ${Utils.formatCurrency(summary.total_expenses || 0)}
                 </p>
             </div>
             <div class="stat-card">
-                <h3>Categories</h3>
+                <h3>Expense Groups</h3>
                 <p style="font-size: 1.5rem; font-weight: bold; color: var(--secondary-color);">
                     ${(summary.categories || []).length}
                 </p>
@@ -2998,13 +3096,13 @@ function renderExpensesTable(expenses, pagination) {
         monthInfo = `
             <div style="margin-bottom: 1rem;">
                 <h3>Expenses for ${monthNames[expensesSelectedMonth - 1]} ${expensesSelectedYear}</h3>
-                <p>Total Expenses: ${expenses ? expenses.length : 0}</p>
+                <p>Total expense records: ${expenses ? expenses.length : 0}</p>
             </div>
         `;
     }
 
     if (!expenses || expenses.length === 0) {
-        container.innerHTML = monthInfo + '<div class="info" style="padding: 2rem; text-align: center;">No expenses found.</div>';
+        container.innerHTML = monthInfo + '<div class="empty-state"><strong>No expenses found</strong>No expense record matches this filter or month.</div>';
         return;
     }
 
@@ -3019,7 +3117,7 @@ function renderExpensesTable(expenses, pagination) {
                 <tr>
                     <th>#</th>
                     <th>Date</th>
-                    <th>Expense Type</th>
+                    <th>Paid For</th>
                     <th>Category</th>
                     <th>Description</th>
                     <th>Amount</th>
@@ -3031,7 +3129,7 @@ function renderExpensesTable(expenses, pagination) {
                     <tr>
                         <td data-label="#">${startIndex + idx + 1}</td>
                         <td data-label="Date">${Utils.formatDate(e.expense_date)}</td>
-                        <td data-label="Expense Type"><strong>${e.expense_type}</strong></td>
+                        <td data-label="Paid For"><strong>${e.expense_type}</strong></td>
                         <td data-label="Category">${e.category || 'N/A'}</td>
                         <td data-label="Description">${e.description || '-'}</td>
                         <td data-label="Amount"><strong style="color: #e74c3c;">${Utils.formatCurrency(e.amount || 0)}</strong></td>
@@ -3090,42 +3188,43 @@ function showExpenseForm(expense = null) {
         <div class="modal" id="expenseModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>${isEdit ? 'Edit' : 'Add'} Expense</h2>
+                    <h2>${isEdit ? 'Edit Expense' : 'Add Expense'}</h2>
                     <button class="modal-close" onclick="closeExpenseModal()">&times;</button>
                 </div>
                 <form id="expenseForm" class="modal-body">
                     ${isEdit ? `<input type="hidden" id="expenseId" value="${expense.id}">` : ''}
+                    <div class="simple-note"><strong>Tip:</strong> Write what the gym paid for, the amount, and the date. Keep the note short and clear.</div>
                     <div class="form-group">
-                        <label>Expense Type *</label>
-                        <input type="text" id="expenseType" name="expense_type" value="${expense?.expense_type || ''}" required placeholder="e.g., Equipment Maintenance, Rent, Utilities">
+                        <label>What was paid for? *</label>
+                        <input type="text" id="expenseType" name="expense_type" value="${expense?.expense_type || ''}" required placeholder="Example: Rent, Electricity, Cleaning">
                     </div>
                     <div class="form-group">
-                        <label>Category</label>
+                        <label>Group</label>
                         <select id="expenseCategory" name="category" style="width: 100%; margin-bottom: 0.5rem;">
-                            <option value="">Select existing category (optional)</option>
+                            <option value="">Choose existing group (optional)</option>
                         </select>
-                        <input type="text" id="expenseCategoryNew" name="category_new" value="${expense?.category || ''}" placeholder="Or type a new category (optional)" style="margin-top: 0.25rem;">
-                        <small>You can either select an existing category or type a new one above.</small>
+                        <input type="text" id="expenseCategoryNew" name="category_new" value="${expense?.category || ''}" placeholder="Or type a new group name" style="margin-top: 0.25rem;">
+                        <small>You can choose an existing group or type a new one.</small>
                     </div>
                     <div class="form-group">
                         <label>Amount *</label>
                         <input type="number" step="0.01" id="expenseAmount" name="amount" value="${expense?.amount || ''}" min="0" required>
                     </div>
                     <div class="form-group">
-                        <label>Expense Date *</label>
+                        <label>Date *</label>
                         <input type="date" id="expenseDate" name="expense_date" value="${expense?.expense_date || new Date().toISOString().split('T')[0]}" required>
                     </div>
                     <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="expenseDescription" name="description" rows="3" placeholder="Optional description">${expense?.description || ''}</textarea>
+                        <label>Short Note</label>
+                        <textarea id="expenseDescription" name="description" rows="3" placeholder="Optional short description">${expense?.description || ''}</textarea>
                     </div>
                     <div class="form-group">
-                        <label>Notes</label>
-                        <textarea id="expenseNotes" name="notes" rows="2" placeholder="Additional notes (optional)">${expense?.notes || ''}</textarea>
+                        <label>Extra Notes</label>
+                        <textarea id="expenseNotes" name="notes" rows="2" placeholder="Optional extra notes">${expense?.notes || ''}</textarea>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeExpenseModal()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">${isEdit ? 'Update' : 'Add'} Expense</button>
+                        <button type="submit" class="btn btn-primary">Save Expense</button>
                     </div>
                 </form>
             </div>
@@ -3224,7 +3323,7 @@ function saveExpense() {
         })
         .then(data => {
             if (data.success) {
-                Utils.showNotification(data.message || (isEdit ? 'Expense updated' : 'Expense added'), 'success');
+                Utils.showNotification(data.message || (isEdit ? 'Expense updated successfully.' : 'Expense added successfully.'), 'success');
                 closeExpenseModal();
                 loadExpensesTable();
                 if (currentSection === 'dashboard') loadDashboard();
@@ -3249,7 +3348,7 @@ function deleteExpense(expenseId) {
         })
         .then(data => {
             if (data && data.success) {
-                Utils.showNotification('Expense deleted successfully', 'success');
+                Utils.showNotification('Expense deleted successfully.', 'success');
                 loadExpensesTable();
                 if (currentSection === 'dashboard') loadDashboard();
             } else {
@@ -3265,23 +3364,34 @@ function deleteExpense(expenseId) {
 function loadReports() {
     const html = `
         <div class="reports-section">
+            ${renderSectionGuideCard({
+                chip: 'Reports Help',
+                title: 'Choose the question you want answered',
+                description: 'Reports are easier to use when you think in simple questions: how many members, who came today, how much money came in, and who has not paid.',
+                steps: [
+                    'Use Members Overview for total active members.',
+                    'Use Attendance Overview for today and this month.',
+                    'Use Payment Overview for revenue numbers.',
+                    'Use Unpaid Members for late payers.'
+                ]
+            })}
             <h2>Reports</h2>
             <div class="reports-grid">
                 <div class="report-card" onclick="generateReport('members')">
-                    <h3>📊 Member Report</h3>
-                    <p>View detailed member statistics</p>
+                    <h3>📊 Members Overview</h3>
+                    <p>See total, active, and overdue members</p>
                 </div>
                 <div class="report-card" onclick="generateReport('attendance')">
-                    <h3>✓ Attendance Report</h3>
-                    <p>View attendance statistics</p>
+                    <h3>✓ Attendance Overview</h3>
+                    <p>See who came today and this month</p>
                 </div>
                 <div class="report-card" onclick="generateReport('payments')">
-                    <h3>💰 Payment Report</h3>
-                    <p>View payment and revenue statistics</p>
+                    <h3>💰 Payment Overview</h3>
+                    <p>See revenue and payment totals</p>
                 </div>
                 <div class="report-card" onclick="generateReport('defaulters')">
-                    <h3>⚠️ Fee Defaulters</h3>
-                    <p>View members with overdue payments</p>
+                    <h3>⚠️ Unpaid Members</h3>
+                    <p>See members with overdue or unpaid fees</p>
                 </div>
             </div>
             <div id="reportResults" style="margin-top: 2rem;"></div>
@@ -3316,7 +3426,7 @@ function renderReport(data, type) {
         case 'members':
             resultsDiv.innerHTML = `
                 <div class="report-content">
-                    <h3>Member Statistics</h3>
+                    <h3>Members Overview</h3>
                     <div class="stats-grid">
                         <div class="stat-item"><strong>Total Men Members:</strong> ${data.men?.total || 0}</div>
                         <div class="stat-item"><strong>Active Men:</strong> ${data.men?.active || 0}</div>
@@ -3337,9 +3447,9 @@ function renderReport(data, type) {
             const defaulters = data.defaulters || [];
             resultsDiv.innerHTML = `
                 <div class="report-content">
-                    <h3>Fee Defaulters (${defaulters.length})</h3>
+                    <h3>Unpaid Members (${defaulters.length})</h3>
                     <div class="stats-grid" style="margin-bottom: 1rem;">
-                        <div class="stat-item"><strong>Total Defaulters:</strong> ${data.total_count || defaulters.length}</div>
+                        <div class="stat-item"><strong>Total Unpaid Members:</strong> ${data.total_count || defaulters.length}</div>
                         <div class="stat-item"><strong>Overdue Members:</strong> ${data.overdue_count || 0}</div>
                         <div class="stat-item"><strong>Members With Outstanding Dues:</strong> ${data.outstanding_dues_count || 0}</div>
                         <div class="stat-item"><strong>Total Outstanding:</strong> ${Utils.formatCurrency(data.total_outstanding_amount || 0)}</div>
@@ -3371,20 +3481,20 @@ function renderReport(data, type) {
                                             <td><span style="color: ${d.days_overdue > 0 ? 'red' : '#f39c12'}; font-weight: bold;">${d.days_overdue || 0} days</span></td>
                                             <td><strong style="color: #e74c3c;">${Utils.formatCurrency(d.total_due_amount || 0)}</strong></td>
                                             <td>
-                                                <button class="btn btn-sm btn-primary" onclick="currentGender='${d.gender}'; updateFee(${d.id}, '${d.member_code}')">Update Fee</button>
+                                                <button class="btn btn-sm btn-primary" onclick="currentGender='${d.gender}'; updateFee(${d.id}, '${d.member_code}')">Take Fee</button>
                                             </td>
                                         </tr>
                                     `).join('')}
                             </tbody>
                         </table>
-                    ` : '<p>No fee defaulters found. All members are up to date!</p>'}
+                    ` : '<div class="empty-state"><strong>No unpaid members found</strong>All members are up to date.</div>'}
                 </div>
             `;
             break;
         case 'payments':
             resultsDiv.innerHTML = `
                 <div class="report-content">
-                    <h3>Payment Statistics</h3>
+                    <h3>Payment Overview</h3>
                     <div class="stats-grid">
                         <div class="stat-item"><strong>Total Payments:</strong> ${data.total_payments || 0}</div>
                         <div class="stat-item"><strong>Total Revenue:</strong> ${Utils.formatCurrency(data.total_revenue || 0)}</div>
@@ -3425,6 +3535,16 @@ function renderReport(data, type) {
 function loadImport() {
     const html = `
         <div class="import-section">
+            ${renderSectionGuideCard({
+                chip: 'Import Help',
+                title: 'Import or download data carefully',
+                description: 'Use import only when you already have member data in Excel or CSV. For day-to-day use, adding members one by one is safer.',
+                steps: [
+                    'Pick the correct gender before importing.',
+                    'Use download if you want a backup or a report file.',
+                    'For large files, wait until the import result appears.'
+                ]
+            })}
             <div class="import-export-container">
                 <!-- Import Section -->
                 <div class="import-card">
@@ -3664,26 +3784,36 @@ function loadSync() {
 
     const html = `
         <div class="sync-section">
+            ${renderSectionGuideCard({
+                chip: 'Sync Help',
+                title: 'Use sync only when needed',
+                description: 'This is not a normal daily button for most staff. Use it only when you need to send or receive data between local and online systems.',
+                steps: [
+                    'If you are not sure, stop and ask before syncing.',
+                    'Watch the result box after every sync.',
+                    'Do not repeat force sync unless you understand why it is needed.'
+                ]
+            })}
             <div class="section-header">
-                <h2>Data Synchronization</h2>
+                <h2>Send / Download Data</h2>
                 <div class="section-actions">
                     ${isOnline ?
-            '<button class="btn btn-primary" id="reverseSyncBtn">⬇️ Sync to Local</button>' :
-            '<button class="btn btn-primary" id="syncNowBtn">🔄 Sync to Online</button>'
+            '<button class="btn btn-primary" id="reverseSyncBtn">⬇️ Download to Local</button>' :
+            '<button class="btn btn-primary" id="syncNowBtn">🔄 Send to Online</button>'
         }
                 </div>
             </div>
-            <div style="background: rgba(26, 31, 58, 0.6); color: #ffffff; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 1.5rem; border: 1px solid var(--border-color);">
-                <h3 style="color: #ffffff;">Sync Status</h3>
-                <div id="syncStatus" style="margin-top: 1rem; color: #d1d5db;">
+            <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 1.5rem; border: 1px solid var(--border-color);">
+                <h3 style="color: #166534;">Current Status</h3>
+                <div id="syncStatus" style="margin-top: 1rem; color: #4b7a5e;">
                     <p>${isOnline ?
-            'Click "Sync to Local" to download online data to your local database.' :
-            'Click "Sync to Online" to upload local data to online server.'
+            'Click "Download to Local" to copy online data into your local database.' :
+            'Click "Send to Online" to upload local data to the online server.'
         }</p>
                 </div>
             </div>
-            <div style="background: rgba(26, 31, 58, 0.6); color: #ffffff; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--border-color);">
-                <h3 style="color: #ffffff;">Sync History</h3>
+            <div style="background: #ffffff; color: #14291c; padding: 1.5rem; border-radius: 10px; box-shadow: var(--shadow); border: 1px solid var(--border-color);">
+                <h3 style="color: #166534;">Recent Activity</h3>
                 <div id="syncHistory" style="margin-top: 1rem;">
                     <div class="loading">Loading sync history...</div>
                 </div>
@@ -3713,11 +3843,11 @@ function performSync() {
 
     if (syncBtn) {
         syncBtn.disabled = true;
-        syncBtn.textContent = 'Syncing...';
+        syncBtn.textContent = 'Working...';
     }
 
     if (syncStatus) {
-        syncStatus.innerHTML = '<div class="loading">Synchronizing data with online server...</div>';
+        syncStatus.innerHTML = '<div class="loading">Sending data to online server...</div>';
     }
 
     // First try normal sync
@@ -3736,13 +3866,13 @@ function performSync() {
         .then(data => {
             if (syncBtn) {
                 syncBtn.disabled = false;
-                syncBtn.textContent = '🔄 Sync Now';
+                syncBtn.textContent = '🔄 Send to Online';
             }
 
             if (data && data.success) {
                 // If 0 records synced, suggest force sync
                 if ((data.total_synced || 0) === 0 && (data.total_failed || 0) === 0) {
-                    const forceSync = confirm('No records were synced. This might mean all records are marked as synced in the sync log, but they may not actually be in the online database.\n\nWould you like to FORCE SYNC ALL records (this will ignore sync history and sync everything)?');
+                    const forceSync = confirm('No records were sent this time. This may mean everything is already marked as sent, even if some data is missing online.\n\nDo you want to send everything again? This ignores previous sync history.');
                     if (forceSync) {
                         // Retry with force sync
                         fetch('api/sync-local.php?type=manual&force=1')
@@ -3759,11 +3889,11 @@ function performSync() {
                             })
                             .then(forceData => {
                                 if (forceData && forceData.success) {
-                                    Utils.showNotification('Force sync completed: ' + (forceData.total_synced || 0) + ' records synced', 'success');
+                                    Utils.showNotification('Full resend completed: ' + (forceData.total_synced || 0) + ' records sent', 'success');
                                     if (syncStatus) {
                                         syncStatus.innerHTML = `
                                             <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                                                <strong>✅ Force Sync Completed</strong>
+                                                <strong>✅ Full resend completed</strong>
                                                 <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Synced: <strong style="color: #28a745;">${forceData.total_synced || 0}</strong></p>
                                                 <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Failed: <strong style="color: ${forceData.total_failed > 0 ? '#dc3545' : '#28a745'};">${forceData.total_failed || 0}</strong></p>
                                             </div>
@@ -3771,21 +3901,21 @@ function performSync() {
                                     }
                                     loadSyncHistory();
                                 } else {
-                                    Utils.showNotification('Force sync failed: ' + (forceData?.message || 'Unknown error'), 'error');
+                                    Utils.showNotification('Full resend failed: ' + (forceData?.message || 'Unknown error'), 'error');
                                 }
                             })
                             .catch(err => {
-                                Utils.showNotification('Force sync error: ' + err.message, 'error');
+                                Utils.showNotification('Full resend error: ' + err.message, 'error');
                             });
                         return;
                     }
                 }
 
-                Utils.showNotification(data.message || 'Sync completed successfully', 'success');
+                Utils.showNotification(data.message || 'Data send completed successfully', 'success');
                 if (syncStatus) {
                     syncStatus.innerHTML = `
                         <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                            <strong>✅ Sync Completed</strong>
+                            <strong>✅ Data send completed</strong>
                             <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Synced: <strong style="color: #28a745;">${data.total_synced || 0}</strong></p>
                             <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">Records Failed: <strong style="color: ${data.total_failed > 0 ? '#dc3545' : '#28a745'};">${data.total_failed || 0}</strong></p>
                             ${data.errors && data.errors.length > 0 ? `
@@ -3806,7 +3936,7 @@ function performSync() {
                 if (syncStatus) {
                     syncStatus.innerHTML = `
                         <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                            <strong>❌ Sync Failed</strong>
+                            <strong>❌ Data send failed</strong>
                             <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">${data?.message || 'Unknown error'}</p>
                         </div>
                     `;
@@ -3817,13 +3947,13 @@ function performSync() {
             console.error('Sync error:', err);
             if (syncBtn) {
                 syncBtn.disabled = false;
-                syncBtn.textContent = '🔄 Sync Now';
+                syncBtn.textContent = '🔄 Send to Online';
             }
             Utils.showNotification('Error during sync: ' + err.message, 'error');
             if (syncStatus) {
                 syncStatus.innerHTML = `
                     <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                        <strong>❌ Sync Error</strong>
+                        <strong>❌ Data send error</strong>
                         <p style="margin: 0.5rem 0 0 0; color: #d1d5db;">${err.message}</p>
                     </div>
                 `;
@@ -3837,7 +3967,7 @@ function performReverseSync() {
 
     if (syncBtn) {
         syncBtn.disabled = true;
-        syncBtn.textContent = 'Syncing...';
+        syncBtn.textContent = 'Working...';
     }
 
     if (syncStatus) {
@@ -3859,15 +3989,15 @@ function performReverseSync() {
         .then(data => {
             if (syncBtn) {
                 syncBtn.disabled = false;
-                syncBtn.textContent = '⬇️ Sync to Local';
+                syncBtn.textContent = '⬇️ Download to Local';
             }
 
             if (data && data.success) {
-                Utils.showNotification(data.message || 'Reverse sync completed successfully', 'success');
+                Utils.showNotification(data.message || 'Download to local completed successfully', 'success');
                 if (syncStatus) {
                     syncStatus.innerHTML = `
                         <div style="padding: 1rem; background: rgba(40, 167, 69, 0.2); border-radius: 5px; color: #28a745; border: 1px solid #28a745;">
-                            <strong>✅ Reverse Sync Completed</strong>
+                            <strong>✅ Download to local completed</strong>
                             <p style="margin: 0.5rem 0 0 0;">Records Synced: ${data.total_synced || 0}</p>
                             <p style="margin: 0.5rem 0 0 0;">Records Failed: ${data.total_failed || 0}</p>
                             ${data.errors && data.errors.length > 0 ? `
@@ -3884,11 +4014,11 @@ function performReverseSync() {
                 }
                 loadSyncHistory();
             } else {
-                Utils.showNotification(data?.message || 'Reverse sync failed', 'error');
+                Utils.showNotification(data?.message || 'Download to local failed', 'error');
                 if (syncStatus) {
                     let errorHtml = `
                         <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                            <strong>❌ Reverse Sync Failed</strong>
+                            <strong>❌ Download to local failed</strong>
                             <p style="margin: 0.5rem 0 0 0;"><strong>${data?.message || 'Unknown error'}</strong></p>
                     `;
 
@@ -3920,13 +4050,13 @@ function performReverseSync() {
             console.error('Reverse sync error:', err);
             if (syncBtn) {
                 syncBtn.disabled = false;
-                syncBtn.textContent = '⬇️ Sync to Local';
+                syncBtn.textContent = '⬇️ Download to Local';
             }
-            Utils.showNotification('Error during reverse sync: ' + err.message, 'error');
+            Utils.showNotification('Download to local error: ' + err.message, 'error');
             if (syncStatus) {
                 syncStatus.innerHTML = `
                     <div style="padding: 1rem; background: rgba(220, 53, 69, 0.2); border-radius: 5px; color: #dc3545; border: 1px solid #dc3545;">
-                        <strong>❌ Reverse Sync Error</strong>
+                        <strong>❌ Download to local error</strong>
                         <p style="margin: 0.5rem 0 0 0;">${err.message}</p>
                     </div>
                 `;
@@ -3939,7 +4069,7 @@ function loadSyncHistory() {
     // For now, just show a message
     const syncHistory = document.getElementById('syncHistory');
     if (syncHistory) {
-        syncHistory.innerHTML = '<p>Sync history will be displayed here after sync operations.</p>';
+        syncHistory.innerHTML = '<p>Recent send/download activity will appear here after you run it.</p>';
     }
 }
 
@@ -4014,9 +4144,9 @@ function toggleGlobalSearchScan() {
             <div style="font-size: 4rem; color: #2196F3; margin-bottom: 20px;">
                 <i class="fas fa-wifi fa-pulse"></i>
             </div>
-            <h2 style="margin-bottom: 10px;">Waiting for Admin Scanner...</h2>
-            <p style="font-size: 1.2rem; color: #ccc;">Flash a card on the admin desk scanner to view profile.</p>
-            <button class="btn btn-secondary" onclick="stopGlobalSearchScan()" style="margin-top: 30px; padding: 10px 30px; font-size: 1.1rem;">Cancel</button>
+            <h2 style="margin-bottom: 10px;">Waiting for member card...</h2>
+            <p style="font-size: 1.2rem; color: #ccc;">Tap or scan the member card on the desk scanner to open profile.</p>
+            <button class="btn btn-secondary" onclick="stopGlobalSearchScan()" style="margin-top: 30px; padding: 10px 30px; font-size: 1.1rem;">Close</button>
         </div>
     `;
     document.body.insertAdjacentHTML('beforeend', overlayHtml);

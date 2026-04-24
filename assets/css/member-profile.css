@@ -1,29 +1,27 @@
 /**
- * Member Profile Styles - Dark Theme with Animations
+ * Member Profile Styles - Light Theme with selected palette
  */
 
-/* Dark Theme Variables */
 :root {
-    --bg-color: #0a0e27;
-    --bg-secondary: #1a1f3a;
-    --bg-tertiary: #252b4a;
-    --text-primary: #ffffff;
-    --text-secondary: #d1d5db;
-    --text-muted: #9ca3af;
-    --border-color: #2d3748;
-    --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
-    --primary-color: #1e88e5;
-    --secondary-color: #333;
-    --success-color: #28a745;
-    --error-color: #dc3545;
-    --violet-color: #8b5cf6;
+    --bg-color: #f3f7f4;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f8fffb;
+    --text-primary: #14291c;
+    --text-secondary: #4b7a5e;
+    --text-muted: #4b7a5e;
+    --border-color: #bbf7d0;
+    --shadow: 0 8px 24px rgba(20, 41, 28, 0.08);
+    --shadow-lg: 0 16px 40px rgba(20, 41, 28, 0.14);
+    --primary-color: #166534;
+    --secondary-color: #14291c;
+    --success-color: #0369a1;
+    --error-color: #dc2626;
+    --violet-color: #14532d;
 }
 
-/* Gradient Background */
 body {
     margin: 0;
-    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f1419 100%);
+    background: #f3f7f4;
     background-attachment: fixed;
     min-height: 100vh;
     font-family: "Poppins", sans-serif;
@@ -48,7 +46,7 @@ body {
 
 /* Lookup Bar */
 .lookup-bar {
-    background: rgba(26, 31, 58, 0.8);
+    background: rgba(255, 255, 255, 0.94);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     padding: 1.5rem;
@@ -86,14 +84,14 @@ body {
     border-radius: 8px;
     font-size: 1rem;
     transition: all 0.3s ease;
-    background: var(--bg-tertiary);
+    background: #ffffff;
     color: var(--text-primary);
 }
 
 .lookup-input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(30, 136, 229, 0.2);
+    box-shadow: 0 0 0 3px rgba(22, 101, 52, 0.14);
     transform: scale(1.02);
 }
 
@@ -119,7 +117,7 @@ body {
 }
 
 .member-profile {
-    background: rgba(26, 31, 58, 0.6);
+    background: rgba(255, 255, 255, 0.94);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border-radius: 15px;
@@ -157,14 +155,14 @@ body {
 }
 
 .profile-card {
-    background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+    background: linear-gradient(135deg, #ffffff 0%, #f8fffb 100%);
     border-radius: 15px;
     padding: 2rem;
-    color: white;
+    color: var(--text-primary);
     box-shadow: var(--shadow-lg);
     transition: transform 0.3s ease, box-shadow 0.3s ease;
     animation: slideInLeft 0.6s ease-out;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-color);
 }
 
 @keyframes slideInLeft {
@@ -181,7 +179,7 @@ body {
 
 .profile-card:hover {
     transform: translateY(-5px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 12px 40px rgba(20, 41, 28, 0.12);
 }
 
 /* Defaulter Red Theme */
@@ -247,10 +245,10 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: #ecfdf5;
     font-size: 6rem;
     font-weight: bold;
-    color: white;
+    color: var(--primary-color);
 }
 
 .profile-details {
@@ -269,7 +267,7 @@ body {
     flex-direction: column;
     margin-bottom: 1rem;
     padding-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 1px solid var(--border-color);
     animation: fadeIn 0.8s ease-out both;
 }
 
@@ -331,7 +329,7 @@ body {
 }
 
 .calendar-section {
-    background: rgba(37, 43, 74, 0.6);
+    background: #ffffff;
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border-radius: 15px;
@@ -365,7 +363,7 @@ body {
 
 /* Attendance Calendar */
 .attendance-calendar {
-    background: rgba(26, 31, 58, 0.4);
+    background: #f8fffb;
     padding: 1.5rem;
     border-radius: 10px;
 }
@@ -544,7 +542,7 @@ body {
 
 /* Fee History */
 .fee-history {
-    background: rgba(26, 31, 58, 0.4);
+    background: #f8fffb;
     padding: 1.5rem;
     border-radius: 10px;
     margin-top: 1rem;
@@ -553,7 +551,7 @@ body {
 .fee-table {
     width: 100%;
     border-collapse: collapse;
-    background: rgba(37, 43, 74, 0.6);
+    background: #ffffff;
     border-radius: 8px;
     overflow: hidden;
 }
@@ -576,7 +574,7 @@ body {
 }
 
 .fee-table tbody tr:hover {
-    background: rgba(30, 136, 229, 0.1);
+    background: rgba(22, 101, 52, 0.06);
     transform: translateX(5px);
 }
 
