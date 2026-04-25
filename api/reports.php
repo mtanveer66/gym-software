@@ -7,20 +7,27 @@ require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
 require_once __DIR__ . '/../app/models/Attendance.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 header('Content-Type: application/json');
 
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 $action = $_GET['action'] ?? '';
 
 try {
     $database = new Database();
     $db = $database->getConnection();
+    $range = $_GET['range'] ?? '30d';
+
+    $daysByRange = [
+        '7d' => 7,
+        '30d' => 30,
+        '3m' => 90,
+        '6m' => 180,
+        '12m' => 365,
+    ];
+    $rangeDays = $daysByRange[$range] ?? 30;
 
     switch ($action) {
         case 'members':
@@ -31,6 +38,17 @@ try {
             $statsWomen = $memberWomen->getStats();
             $opsMen = $memberMen->getOperationalSnapshot();
             $opsWomen = $memberWomen->getOperationalSnapshot();
+
+            $memberTrendQuery = "SELECT label, SUM(total) AS total FROM (
+                SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COUNT(*) AS total FROM members_men GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+                UNION ALL
+                SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COUNT(*) AS total FROM members_women GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            ) t GROUP BY label ORDER BY label ASC";
+            $memberTrendStmt = $db->prepare($memberTrendQuery);
+            $memberTrendStmt->execute();
+            $memberTrend = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (int)($row['total'] ?? 0)];
+            }, $memberTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
 
             echo json_encode([
                 'success' => true,
@@ -43,12 +61,29 @@ try {
                         'overdue' => ($opsMen['overdue'] ?? 0) + ($opsWomen['overdue'] ?? 0),
                         'new_this_month' => ($opsMen['new_this_month'] ?? 0) + ($opsWomen['new_this_month'] ?? 0),
                         'active_due_amount' => ($opsMen['total_active_due'] ?? 0) + ($opsWomen['total_active_due'] ?? 0)
+                    ],
+                    'charts' => [
+                        'gender_split' => [
+                            ['label' => 'Men', 'total' => (int)($statsMen['total'] ?? 0)],
+                            ['label' => 'Women', 'total' => (int)($statsWomen['total'] ?? 0)]
+                        ],
+                        'active_split' => [
+                            ['label' => 'Men Active', 'total' => (int)($statsMen['active'] ?? 0)],
+                            ['label' => 'Women Active', 'total' => (int)($statsWomen['active'] ?? 0)],
+                            ['label' => 'Men Inactive', 'total' => (int)($statsMen['inactive'] ?? 0)],
+                            ['label' => 'Women Inactive', 'total' => (int)($statsWomen['inactive'] ?? 0)]
+                        ],
+                        'monthly_growth' => $memberTrend
                     ]
                 ]
             ]);
             break;
 
         case 'defaulters':
+            foreach (['men', 'women'] as $syncGender) {
+                (new Member($db, $syncGender))->syncAllActivityStatuses();
+            }
+
             $memberSources = [
                 ['table' => 'members_men', 'gender' => 'men'],
                 ['table' => 'members_women', 'gender' => 'women']
@@ -74,6 +109,7 @@ try {
             $overdueCount = 0;
             $outstandingDuesCount = 0;
             $totalOutstanding = 0.0;
+            $genderCounts = ['Men' => 0, 'Women' => 0];
 
             foreach ($defaulters as &$defaulter) {
                 $dueAmount = (float)($defaulter['total_due_amount'] ?? 0);
@@ -82,6 +118,9 @@ try {
                 if ($dueAmount > 0) {
                     $outstandingDuesCount++;
                 }
+
+                $genderKey = ($defaulter['gender'] ?? '') === 'women' ? 'Women' : 'Men';
+                $genderCounts[$genderKey]++;
 
                 $daysOverdue = 0;
                 if (!empty($defaulter['next_fee_due_date'])) {
@@ -95,6 +134,40 @@ try {
             }
             unset($defaulter);
 
+            $topDefaulters = array_slice(array_map(static function ($row) {
+                return [
+                    'label' => $row['name'] . ' (' . $row['member_code'] . ')',
+                    'total' => (float)($row['total_due_amount'] ?? 0),
+                ];
+            }, $defaulters), 0, 10);
+
+            $duesTrendStmt = $db->prepare("SELECT label, SUM(total_due_amount) AS total FROM (
+                SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COALESCE(SUM(total_due_amount), 0) AS total_due_amount FROM members_men GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+                UNION ALL
+                SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COALESCE(SUM(total_due_amount), 0) AS total_due_amount FROM members_women GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            ) dues_trend GROUP BY label ORDER BY label ASC");
+            $duesTrendStmt->execute();
+            $duesTrend = array_map(static function ($row) {
+                return [
+                    'label' => $row['label'],
+                    'total' => (float)($row['total'] ?? 0),
+                ];
+            }, $duesTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            $overdueBands = [
+                ['label' => '1-7 days', 'total' => 0],
+                ['label' => '8-30 days', 'total' => 0],
+                ['label' => '31-60 days', 'total' => 0],
+                ['label' => '60+ days', 'total' => 0],
+            ];
+            foreach ($defaulters as $row) {
+                $days = (int)($row['days_overdue'] ?? 0);
+                if ($days >= 1 && $days <= 7) $overdueBands[0]['total']++;
+                elseif ($days <= 30) $overdueBands[1]['total']++;
+                elseif ($days <= 60) $overdueBands[2]['total']++;
+                elseif ($days > 60) $overdueBands[3]['total']++;
+            }
+
             echo json_encode([
                 'success' => true,
                 'data' => [
@@ -102,7 +175,16 @@ try {
                     'total_count' => count($defaulters),
                     'overdue_count' => $overdueCount,
                     'outstanding_dues_count' => $outstandingDuesCount,
-                    'total_outstanding_amount' => $totalOutstanding
+                    'total_outstanding_amount' => $totalOutstanding,
+                    'charts' => [
+                        'gender_split' => [
+                            ['label' => 'Men', 'total' => $genderCounts['Men']],
+                            ['label' => 'Women', 'total' => $genderCounts['Women']]
+                        ],
+                        'top_defaulters' => $topDefaulters,
+                        'overdue_bands' => $overdueBands,
+                        'dues_trend' => $duesTrend
+                    ]
                 ]
             ]);
             break;
@@ -133,6 +215,36 @@ try {
             $stmt->execute();
             $stats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
+            $dailyTrendStmt = $db->prepare("SELECT payment_date AS label, SUM(amount) AS total FROM (
+                    SELECT payment_date, amount FROM payments_men WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY)
+                    UNION ALL
+                    SELECT payment_date, amount FROM payments_women WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY)
+                ) p GROUP BY payment_date ORDER BY payment_date ASC");
+            $dailyTrendStmt->execute();
+            $dailyTrend = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+            }, $dailyTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            $monthlyTrendStmt = $db->prepare("SELECT label, SUM(total) AS total FROM (
+                    SELECT DATE_FORMAT(payment_date, '%Y-%m') AS label, SUM(amount) AS total FROM payments_men GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+                    UNION ALL
+                    SELECT DATE_FORMAT(payment_date, '%Y-%m') AS label, SUM(amount) AS total FROM payments_women GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+                ) p GROUP BY label ORDER BY label ASC");
+            $monthlyTrendStmt->execute();
+            $monthlyTrend = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+            }, $monthlyTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            $methodStmt = $db->prepare("SELECT payment_method AS label, COUNT(*) AS total FROM (
+                    SELECT COALESCE(payment_method, 'Unknown') AS payment_method FROM payments_men
+                    UNION ALL
+                    SELECT COALESCE(payment_method, 'Unknown') AS payment_method FROM payments_women
+                ) p GROUP BY payment_method ORDER BY total DESC, payment_method ASC");
+            $methodStmt->execute();
+            $methodBreakdown = array_map(static function ($row) {
+                return ['label' => $row['label'] ?: 'Unknown', 'total' => (int)($row['total'] ?? 0)];
+            }, $methodStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
             echo json_encode([
                 'success' => true,
                 'data' => [
@@ -143,7 +255,12 @@ try {
                     'revenue_this_month' => (float)($stats['revenue_this_month'] ?? 0),
                     'payments_today' => (int)($stats['payments_today'] ?? 0),
                     'payments_this_month' => (int)($stats['payments_this_month'] ?? 0),
-                    'pending_remaining_amount' => (float)($stats['pending_remaining_amount'] ?? 0)
+                    'pending_remaining_amount' => (float)($stats['pending_remaining_amount'] ?? 0),
+                    'charts' => [
+                        'daily_revenue' => $dailyTrend,
+                        'monthly_revenue' => $monthlyTrend,
+                        'payment_methods' => $methodBreakdown
+                    ]
                 ]
             ]);
             break;
@@ -169,6 +286,26 @@ try {
             $monthStmt->execute();
             $monthStats = $monthStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
+            $dailyAttendanceStmt = $db->prepare("SELECT label, SUM(total) AS total FROM (
+                SELECT DATE(check_in) AS label, COUNT(*) AS total FROM attendance_men WHERE DATE(check_in) >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY) GROUP BY DATE(check_in)
+                UNION ALL
+                SELECT DATE(check_in) AS label, COUNT(*) AS total FROM attendance_women WHERE DATE(check_in) >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY) GROUP BY DATE(check_in)
+            ) a GROUP BY label ORDER BY label ASC");
+            $dailyAttendanceStmt->execute();
+            $dailyAttendance = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (int)($row['total'] ?? 0)];
+            }, $dailyAttendanceStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            $genderAttendanceStmt = $db->prepare("SELECT label, SUM(total) AS total FROM (
+                SELECT 'Men' AS label, COUNT(*) AS total FROM attendance_men
+                UNION ALL
+                SELECT 'Women' AS label, COUNT(*) AS total FROM attendance_women
+            ) g GROUP BY label ORDER BY label ASC");
+            $genderAttendanceStmt->execute();
+            $genderAttendance = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (int)($row['total'] ?? 0)];
+            }, $genderAttendanceStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
             echo json_encode([
                 'success' => true,
                 'data' => [
@@ -176,7 +313,95 @@ try {
                     'today_unique_members' => ($todayMen['unique_members'] ?? 0) + ($todayWomen['unique_members'] ?? 0),
                     'active_sessions' => ($todayMen['active_sessions'] ?? 0) + ($todayWomen['active_sessions'] ?? 0),
                     'this_month' => (int)($monthStats['month_count'] ?? 0),
-                    'unique_members_this_month' => (int)($monthStats['unique_members_this_month'] ?? 0)
+                    'unique_members_this_month' => (int)($monthStats['unique_members_this_month'] ?? 0),
+                    'charts' => [
+                        'daily_attendance' => $dailyAttendance,
+                        'gender_attendance' => $genderAttendance
+                    ]
+                ]
+            ]);
+            break;
+
+        case 'expenses':
+            $startDate = date('Y-m-01');
+            $endDate = date('Y-m-t');
+
+            $summaryStmt = $db->prepare("SELECT COUNT(*) AS total_expenses, COALESCE(SUM(amount), 0) AS total_amount, COALESCE(AVG(amount), 0) AS avg_amount FROM expenses WHERE expense_date BETWEEN :start_date AND :end_date");
+            $summaryStmt->bindValue(':start_date', $startDate, PDO::PARAM_STR);
+            $summaryStmt->bindValue(':end_date', $endDate, PDO::PARAM_STR);
+            $summaryStmt->execute();
+            $summary = $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $categoryStmt = $db->prepare("SELECT COALESCE(category, 'Uncategorized') AS label, SUM(amount) AS total FROM expenses GROUP BY COALESCE(category, 'Uncategorized') ORDER BY total DESC, label ASC");
+            $categoryStmt->execute();
+            $categories = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+            }, $categoryStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            $monthlyStmt = $db->prepare("SELECT DATE_FORMAT(expense_date, '%Y-%m') AS label, SUM(amount) AS total FROM expenses WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY) GROUP BY DATE_FORMAT(expense_date, '%Y-%m') ORDER BY DATE_FORMAT(expense_date, '%Y-%m') ASC");
+            $monthlyStmt->execute();
+            $monthly = array_map(static function ($row) {
+                return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+            }, $monthlyStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'total_expenses' => (int)($summary['total_expenses'] ?? 0),
+                    'total_amount' => (float)($summary['total_amount'] ?? 0),
+                    'avg_amount' => (float)($summary['avg_amount'] ?? 0),
+                    'charts' => [
+                        'categories' => $categories,
+                        'monthly_expenses' => $monthly
+                    ]
+                ]
+            ]);
+            break;
+
+        case 'profit':
+            $profitTrendStmt = $db->prepare("SELECT periods.label,
+                COALESCE(revenue.total_revenue, 0) AS revenue,
+                COALESCE(expenses.total_expense, 0) AS expenses,
+                COALESCE(revenue.total_revenue, 0) - COALESCE(expenses.total_expense, 0) AS profit
+                FROM (
+                    SELECT DATE_FORMAT(day_date, '%Y-%m') AS label FROM (
+                        SELECT CURDATE() - INTERVAL seq DAY AS day_date
+                        FROM (
+                            SELECT 0 AS seq UNION ALL SELECT 30 UNION ALL SELECT 60 UNION ALL SELECT 90 UNION ALL SELECT 120 UNION ALL SELECT 150 UNION ALL SELECT 180 UNION ALL SELECT 210 UNION ALL SELECT 240 UNION ALL SELECT 270 UNION ALL SELECT 300 UNION ALL SELECT 330 UNION ALL SELECT 360
+                        ) s
+                    ) dates
+                    WHERE day_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY)
+                    GROUP BY DATE_FORMAT(day_date, '%Y-%m')
+                ) periods
+                LEFT JOIN (
+                    SELECT DATE_FORMAT(payment_date, '%Y-%m') AS label, SUM(amount) AS total_revenue FROM (
+                        SELECT payment_date, amount FROM payments_men
+                        UNION ALL
+                        SELECT payment_date, amount FROM payments_women
+                    ) p WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY)
+                    GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+                ) revenue ON revenue.label = periods.label
+                LEFT JOIN (
+                    SELECT DATE_FORMAT(expense_date, '%Y-%m') AS label, SUM(amount) AS total_expense FROM expenses
+                    WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL {$rangeDays} DAY)
+                    GROUP BY DATE_FORMAT(expense_date, '%Y-%m')
+                ) expenses ON expenses.label = periods.label
+                ORDER BY periods.label ASC");
+            $profitTrendStmt->execute();
+            $profitTrend = array_map(static function ($row) {
+                return [
+                    'label' => $row['label'],
+                    'revenue' => (float)($row['revenue'] ?? 0),
+                    'expenses' => (float)($row['expenses'] ?? 0),
+                    'profit' => (float)($row['profit'] ?? 0),
+                ];
+            }, $profitTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'range' => $range,
+                    'trend' => $profitTrend
                 ]
             ]);
             break;

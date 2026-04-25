@@ -9,6 +9,18 @@ class Member {
     private $table;
     private $dateColumn;
 
+    public static function getStatusCaseExpression(string $joinDateExpression = 'join_date'): string {
+        return "CASE
+            WHEN COALESCE(total_due_amount, 0) <= 0 THEN 'active'
+            WHEN COALESCE(monthly_fee, 0) > 0
+                 AND COALESCE(total_due_amount, 0) >= (COALESCE(monthly_fee, 0) * 2) - 0.01
+            THEN 'inactive'
+            WHEN COALESCE(next_fee_due_date, {$joinDateExpression}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+            THEN 'inactive'
+            ELSE 'active'
+        END";
+    }
+
     public function __construct($db, $gender = 'men') {
         $this->conn = $db;
         $this->gender = in_array($gender, ['men', 'women'], true) ? $gender : 'men';
@@ -62,7 +74,7 @@ class Member {
         }
 
         if ($status !== null && in_array($status, ['active', 'inactive'], true)) {
-            $where[] = 'm.status = :status';
+            $where[] = self::getStatusCaseExpression('m.' . $this->dateColumn) . ' = :status';
             $params[':status'] = $status;
         }
 
@@ -236,15 +248,7 @@ class Member {
 
     public function syncActivityStatus($id): array {
         $query = "UPDATE {$this->table}
-                  SET status = CASE
-                      WHEN COALESCE(total_due_amount, 0) <= 0 THEN 'active'
-                      WHEN COALESCE(monthly_fee, 0) > 0
-                           AND COALESCE(total_due_amount, 0) >= (COALESCE(monthly_fee, 0) * 2) - 0.01
-                      THEN 'inactive'
-                      WHEN COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
-                      THEN 'inactive'
-                      ELSE 'active'
-                  END
+                  SET status = " . self::getStatusCaseExpression($this->dateColumn) . "
                   WHERE id = :id";
 
         $stmt = $this->conn->prepare($query);
@@ -266,15 +270,7 @@ class Member {
 
     public function syncAllActivityStatuses(): array {
         $query = "UPDATE {$this->table}
-                  SET status = CASE
-                      WHEN COALESCE(total_due_amount, 0) <= 0 THEN 'active'
-                      WHEN COALESCE(monthly_fee, 0) > 0
-                           AND COALESCE(total_due_amount, 0) >= (COALESCE(monthly_fee, 0) * 2) - 0.01
-                      THEN 'inactive'
-                      WHEN COALESCE(next_fee_due_date, {$this->dateColumn}) <= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
-                      THEN 'inactive'
-                      ELSE 'active'
-                  END";
+                  SET status = " . self::getStatusCaseExpression($this->dateColumn);
         $updatedStmt = $this->conn->prepare($query);
         $updatedStmt->execute();
 
@@ -304,6 +300,8 @@ class Member {
     }
 
     public function getStats() {
+        $this->syncAllActivityStatuses();
+
         $statsQuery = "SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
@@ -330,6 +328,8 @@ class Member {
     }
 
     public function getOperationalSnapshot(): array {
+        $this->syncAllActivityStatuses();
+
         $query = "SELECT
                 SUM(CASE WHEN status = 'active' AND is_checked_in = 1 THEN 1 ELSE 0 END) as checked_in_now,
                 SUM(CASE WHEN status = 'active' AND next_fee_due_date = CURDATE() THEN 1 ELSE 0 END) as due_today,

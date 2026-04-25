@@ -7,9 +7,9 @@
 USE gym_management;
 
 -- 1. Default Admin User
--- Password: admin (BCrypt encoded)
+-- Password: admin123 (BCrypt encoded)
 INSERT INTO users (username, password, role, name) 
-VALUES ('admin', '$2y$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'admin', 'Administrator')
+VALUES ('admin', '$2y$10$7OVayNVrfaz.zWT/fZESPOSfayaFlUGqeh6j7e6IMQ4pEJvgnrA/m', 'admin', 'Administrator')
 ON DUPLICATE KEY UPDATE name=name;
 
 -- 2. Default Gate Configuration

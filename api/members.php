@@ -6,15 +6,12 @@
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 header('Content-Type: application/json');
 
-// Check authentication
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
@@ -25,6 +22,7 @@ try {
     $database = new Database();
     $db = $database->getConnection();
     $member = new Member($db, $gender);
+    $adminLogger = new AdminLogger($db);
 
     switch ($action) {
         case 'list':
@@ -112,6 +110,7 @@ try {
             break;
 
         case 'create':
+            AuthHelper::ensureAdminAction('Only admin can create members');
             if ($method === 'POST') {
                 $data = json_decode(file_get_contents('php://input'), true);
                 if (!is_array($data)) {
@@ -191,6 +190,11 @@ try {
 
                 $id = $member->create($memberData);
                 if ($id) {
+                    $adminLogger->log('member_created', 'member_' . $gender, $id, null, [
+                        'member_code' => $memberData['member_code'],
+                        'name' => $memberData['name'],
+                        'phone' => $memberData['phone']
+                    ]);
                     echo json_encode(['success' => true, 'id' => $id, 'message' => 'Member created successfully']);
                 } else {
                     http_response_code(500);
@@ -200,6 +204,7 @@ try {
             break;
 
         case 'update':
+            AuthHelper::ensureAdminAction('Only admin can update members');
             if ($method === 'POST' || $method === 'PUT') {
                 $data = json_decode(file_get_contents('php://input'), true);
                 if (!is_array($data)) {
@@ -266,6 +271,12 @@ try {
                 ];
 
                 if ($member->update($id, $memberData)) {
+                    $adminLogger->log('member_updated', 'member_' . $gender, $id, null, [
+                        'member_code' => $memberData['member_code'],
+                        'name' => $memberData['name'],
+                        'phone' => $memberData['phone'],
+                        'status' => $memberData['status']
+                    ]);
                     echo json_encode(['success' => true, 'message' => 'Member updated successfully']);
                 } else {
                     http_response_code(500);
@@ -275,6 +286,7 @@ try {
             break;
 
         case 'delete':
+            AuthHelper::ensureAdminAction('Only admin can delete members');
             if ($method === 'DELETE' || $method === 'POST') {
                 $id = $_GET['id'] ?? json_decode(file_get_contents('php://input'), true)['id'] ?? null;
 
@@ -285,6 +297,7 @@ try {
                 }
 
                 if ($member->delete($id)) {
+                    $adminLogger->log('member_deleted', 'member_' . $gender, $id);
                     echo json_encode(['success' => true, 'message' => 'Member deleted successfully']);
                 } else {
                     http_response_code(500);
@@ -306,6 +319,9 @@ try {
                 }
 
                 if ($member->updateFeeDueDate($id, $date)) {
+                    $adminLogger->log('member_due_date_updated', 'member_' . $gender, $id, null, [
+                        'next_fee_due_date' => $date
+                    ]);
                     echo json_encode(['success' => true, 'message' => 'Fee due date updated successfully']);
                 } else {
                     http_response_code(500);

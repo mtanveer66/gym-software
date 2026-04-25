@@ -9,18 +9,15 @@ ob_start();
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Expense.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 // Clear any output
 ob_clean();
 
 header('Content-Type: application/json');
 
-// Check authentication
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
@@ -29,6 +26,7 @@ try {
     $database = new Database();
     $db = $database->getConnection();
     $expense = new Expense($db);
+    $adminLogger = new AdminLogger($db);
 
     switch ($action) {
         case 'list':
@@ -55,6 +53,7 @@ try {
             break;
 
         case 'create':
+            AuthHelper::ensureAdminAction('Only admin can create expenses');
             if ($method === 'POST') {
                 $input = file_get_contents('php://input');
                 if (empty($input)) {
@@ -88,6 +87,12 @@ try {
 
                 $id = $expense->create($expenseData);
                 if ($id) {
+                    $adminLogger->log('expense_created', 'expense', $id, null, [
+                        'expense_type' => $expenseData['expense_type'],
+                        'amount' => $expenseData['amount'],
+                        'expense_date' => $expenseData['expense_date'],
+                        'category' => $expenseData['category']
+                    ]);
                     echo json_encode([
                         'success' => true,
                         'id' => $id,
@@ -101,6 +106,7 @@ try {
             break;
 
         case 'update':
+            AuthHelper::ensureAdminAction('Only admin can update expenses');
             if ($method === 'POST' || $method === 'PUT') {
                 $input = file_get_contents('php://input');
                 if (empty($input)) {
@@ -133,6 +139,12 @@ try {
                 ];
 
                 if ($expense->update($id, $expenseData)) {
+                    $adminLogger->log('expense_updated', 'expense', $id, null, [
+                        'expense_type' => $expenseData['expense_type'],
+                        'amount' => $expenseData['amount'],
+                        'expense_date' => $expenseData['expense_date'],
+                        'category' => $expenseData['category']
+                    ]);
                     echo json_encode([
                         'success' => true,
                         'message' => 'Expense updated successfully'
@@ -145,6 +157,7 @@ try {
             break;
 
         case 'delete':
+            AuthHelper::ensureAdminAction('Only admin can delete expenses');
             if ($method === 'DELETE' || $method === 'POST') {
                 $id = $_GET['id'] ?? null;
                 if ($method === 'POST') {
@@ -160,6 +173,7 @@ try {
                 }
 
                 if ($expense->delete($id)) {
+                    $adminLogger->log('expense_deleted', 'expense', $id);
                     echo json_encode([
                         'success' => true,
                         'message' => 'Expense deleted successfully'

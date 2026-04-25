@@ -11,18 +11,15 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
 require_once __DIR__ . '/../app/models/Payment.php';
 require_once __DIR__ . '/../app/helpers/SyncHelper.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
 
 // Clear any output that might have been generated
 ob_clean();
 
 header('Content-Type: application/json');
 
-// Check authentication
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdmin();
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -67,6 +64,7 @@ try {
     $database = new Database();
     $db = $database->getConnection();
     $member = new Member($db, $gender);
+    $adminLogger = new AdminLogger($db);
     
     // Get member details
     $memberData = $member->getById($memberId);
@@ -215,6 +213,20 @@ try {
 
         // Mark this member record for re-sync so cloud database gets the new due amount
         SyncHelper::markRecordForSync($db, "members_{$gender}", (int)$memberId);
+        if ($paymentId) {
+            SyncHelper::markRecordForSync($db, "payments_{$gender}", (int)$paymentId);
+        }
+
+        $adminLogger->log('member_due_updated', 'member_' . $gender, $memberId, null, [
+            'due_action' => $action,
+            'previous_due_amount' => $currentDueAmount,
+            'new_due_amount' => $actualNewAmount,
+            'payment_recorded' => $shouldCreatePayment && $paymentId !== null,
+            'payment_id' => $paymentId,
+            'payment_amount' => $paymentAmount,
+            'member_status' => $updated['status'] ?? ($statusSync['status'] ?? $memberData['status'] ?? 'active'),
+            'next_fee_due_date' => $updated['next_fee_due_date'] ?? ($memberData['next_fee_due_date'] ?? null),
+        ]);
 
         $response = [
             'success' => true,

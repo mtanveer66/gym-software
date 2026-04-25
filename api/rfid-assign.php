@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../app/helpers/Cache.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 header('Content-Type: application/json');
 
@@ -40,7 +41,8 @@ try {
             break;
 
         case 'get_latest':
-            // Called by Admin Frontend
+            // Called by Admin/Staff Frontend
+            AuthHelper::requireAdminOrStaff();
             $cached = Cache::get('latest_rfid_scan');
             
             if ($cached) {

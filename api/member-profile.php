@@ -26,18 +26,16 @@ try {
     $database = new Database();
     $db = $database->getConnection();
 
-    // For member lookup, we need to check both genders
+    // For member lookup, check both genders by exact member code.
     $memberMen = new Member($db, 'men');
     $memberWomen = new Member($db, 'women');
     
     $member = null;
     $gender = null;
-    $memberId = $_GET['member_id'] ?? '';
+    $memberId = filter_var($_GET['member_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     
-    // Support lookup by CODE first (safest for gender detection)
-    // 1. Support lookup by CODE/SEARCH TERM first (safest for gender detection)
+    // 1. Exact member-code lookup (public member portal flow)
     if (!empty($memberCode)) {
-        // Try searching by member code first
         $member = $memberMen->getByCode($memberCode);
         $gender = 'men';
         
@@ -45,64 +43,32 @@ try {
             $member = $memberWomen->getByCode($memberCode);
             $gender = 'women';
         }
-        
-        // If not found by code, try searching by email, phone, or name
-        if (!$member) {
-            $searchTerm = $memberCode;
-            // Search in men's table
-            $searchQuery = "SELECT * FROM members_men WHERE 
-                member_code LIKE :search_code OR 
-                email LIKE :search_email OR 
-                phone LIKE :search_phone OR 
-                name LIKE :search_name
-                LIMIT 1";
-            $searchStmt = $db->prepare($searchQuery);
-            $searchParam = '%' . $searchTerm . '%';
-            $searchStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
-            $searchStmt->bindValue(':search_email', $searchParam, PDO::PARAM_STR);
-            $searchStmt->bindValue(':search_phone', $searchParam, PDO::PARAM_STR);
-            $searchStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
-            $searchStmt->execute();
-            $member = $searchStmt->fetch();
-            $gender = 'men';
-            
-            // If not found in men's, try women's
-            if (!$member) {
-                $searchQuery = "SELECT * FROM members_women WHERE 
-                    member_code LIKE :search_code OR 
-                    email LIKE :search_email OR 
-                    phone LIKE :search_phone OR 
-                    name LIKE :search_name
-                    LIMIT 1";
-                $searchStmt = $db->prepare($searchQuery);
-                $searchStmt->bindValue(':search_code', $searchParam, PDO::PARAM_STR);
-                $searchStmt->bindValue(':search_email', $searchParam, PDO::PARAM_STR);
-                $searchStmt->bindValue(':search_phone', $searchParam, PDO::PARAM_STR);
-                $searchStmt->bindValue(':search_name', $searchParam, PDO::PARAM_STR);
-                $searchStmt->execute();
-                $member = $searchStmt->fetch();
-                $gender = 'women';
-            }
-        }
-    } 
-    // 2. Fallback to ID directly
-    elseif (!empty($memberId)) {
-        $memberMen = new Member($db, 'men');
-        $member = $memberMen->getById($memberId);
-        $gender = 'men';
-        
-        if (!$member) {
-            $memberWomen = new Member($db, 'women');
-            $member = $memberWomen->getById($memberId);
-            $gender = 'women';
-        }
-    } 
-    // 3. Fallback to Session
+    }
+    // 2. Logged-in member session fallback
     elseif (isset($_SESSION['member_code'])) {
-        // Use session data if available
         $gender = $_SESSION['member_gender'] ?? 'men';
         $memberModel = $gender === 'women' ? $memberWomen : $memberMen;
         $member = $memberModel->getByCode($_SESSION['member_code']);
+    }
+    // 3. Admin/staff direct lookup by ID (internal use only)
+    elseif ($memberId && in_array($_SESSION['role'] ?? null, ['admin', 'staff'], true)) {
+        $member = $memberMen->getById($memberId);
+        $gender = 'men';
+
+        if (!$member) {
+            $member = $memberWomen->getById($memberId);
+            $gender = 'women';
+        }
+    }
+
+    if ($member && isset($member['id']) && $gender) {
+        try {
+            $memberModel = $gender === 'women' ? $memberWomen : $memberMen;
+            $memberModel->syncActivityStatus((int)$member['id']);
+            $member = $memberModel->getById((int)$member['id']);
+        } catch (Throwable $e) {
+            error_log('Member profile status sync failed: ' . $e->getMessage());
+        }
     }
 
     if (!$member) {

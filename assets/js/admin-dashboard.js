@@ -4,6 +4,7 @@
 
 let currentSection = 'dashboard';
 let currentGender = 'men';
+let currentUserRole = null;
 let activeRequests = {}; // Track active fetch requests to cancel them if needed
 let isLoadingDashboard = false; // Prevent multiple simultaneous dashboard loads
 let memberStatusFilter = null; // 'active', 'inactive', or null for all
@@ -62,17 +63,35 @@ function setupMobileMenu() {
     }
 }
 
+function applyRolePermissions() {
+    const hiddenSectionsByRole = {
+        staff: ['staff', 'activity-log', 'import', 'sync', 'reminders']
+    };
+
+    const hiddenSections = hiddenSectionsByRole[currentUserRole] || [];
+    document.querySelectorAll('.nav-item[data-section]').forEach(item => {
+        const section = item.dataset.section;
+        item.style.display = hiddenSections.includes(section) ? 'none' : '';
+    });
+
+    if (hiddenSections.includes(currentSection)) {
+        switchSection('dashboard');
+    }
+}
+
 function checkAuth() {
     fetch('api/auth.php?action=check')
         .then(res => res.json())
         .then(data => {
-            if (!data.authenticated || data.role !== 'admin') {
+            if (!data.authenticated || !['admin', 'staff'].includes(data.role)) {
                 window.location.href = 'index.html';
             } else {
+                currentUserRole = data.role;
                 const userName = document.getElementById('userName');
                 if (userName) {
-                    userName.textContent = data.username || 'Admin';
+                    userName.textContent = data.username || data.name || (data.role === 'staff' ? 'Staff' : 'Admin');
                 }
+                applyRolePermissions();
             }
         })
         .catch(err => {
@@ -91,6 +110,16 @@ function setupNavigation() {
             });
         }
     });
+}
+
+function isAdminUser() {
+    return currentUserRole === 'admin';
+}
+
+function requireAdminAccess(actionText = 'perform this action') {
+    if (isAdminUser()) return true;
+    Utils.showNotification(`Only admin can ${actionText}.`, 'error');
+    return false;
 }
 
 function renderSectionGuideCard({ chip = 'Quick Help', title, description, steps = [], actions = '' }) {
@@ -137,6 +166,14 @@ function startSectionAutoRefresh() {
 }
 
 function switchSection(section) {
+    const blockedSectionsByRole = {
+        staff: ['staff', 'activity-log', 'import', 'sync', 'reminders']
+    };
+    if ((blockedSectionsByRole[currentUserRole] || []).includes(section)) {
+        Utils.showNotification('This section is available for admin only.', 'error');
+        return;
+    }
+
     // Don't reload if already on this section
     if (currentSection === section && document.getElementById('contentBody').innerHTML !== '<div class="loading">Loading...</div>') {
         startSectionAutoRefresh();
@@ -172,6 +209,8 @@ function switchSection(section) {
         'due-fees': 'Members Who Need to Pay',
         'expenses': 'Money Spent',
         'reports': 'Reports',
+        'staff': 'Staff',
+        'activity-log': 'Activity Log',
         'import': 'Import / Download',
         'sync': 'Sync / Backup',
         'reminders': 'WhatsApp Reminders'
@@ -219,6 +258,12 @@ function loadSection(section) {
             break;
         case 'reports':
             loadReports();
+            break;
+        case 'staff':
+            loadStaff();
+            break;
+        case 'activity-log':
+            loadActivityLog();
             break;
         case 'import':
             loadImport();
@@ -432,6 +477,11 @@ function renderDashboard(data) {
     const men = data.men || { stats: { total: 0, active: 0 }, recent: [] };
     const women = data.women || { stats: { total: 0, active: 0 }, recent: [] };
     const total = data.total || { members: 0, active: 0 };
+    const memberGrowthSeries = data.member_growth || [];
+    const revenueTrendSeries = data.revenue_trend || [];
+    const attendanceTrendSeries = data.attendance_trend || [];
+    const expenseTrendSeries = data.expense_trend || [];
+    const duesTrendSeries = data.dues_trend || [];
 
     const html = `
         ${renderSectionGuideCard({
@@ -540,6 +590,7 @@ function renderDashboard(data) {
                 </small>
             </div>
         </div>
+        ${isAdminUser() ? `
         <div class="dashboard-stats" style="margin-top: 1.5rem;">
             <div class="stat-card" style="background: #ffffff; color: #14291c; border: 1px solid #bbf7d0; cursor: pointer;" onclick="forceOpenGate('checkin')">
                 <h3 style="color: #166534;">🚪 Open Entry Gate Manually</h3>
@@ -551,6 +602,15 @@ function renderDashboard(data) {
                 <p class="stat-value" style="color: #0369a1; font-size: 1.5rem;">Click to Open</p>
                 <small style="color: #4b7a5e;">Manually open check-out gate</small>
             </div>
+        </div>
+        ` : ''}
+        <div class="activity-analytics-grid" style="margin-top:1.5rem;">
+            ${renderAnalyticsBlock('Member Growth', 'Monthly join trend', 'dashboardMembersChart', memberGrowthSeries, 'line', '#166534')}
+            ${renderAnalyticsBlock('Revenue Trend', 'Recent collections trend', 'dashboardRevenueChart', revenueTrendSeries, 'line', '#0369a1')}
+            ${renderAnalyticsBlock('Attendance Trend', 'Recent check-in trend', 'dashboardAttendanceChart', attendanceTrendSeries, 'line', '#7c3aed')}
+            ${renderAnalyticsBlock('Expense Trend', 'Recent spending trend', 'dashboardExpenseChart', expenseTrendSeries, 'line', '#dc2626')}
+            ${renderAnalyticsBlock('Profit Trend', 'Revenue minus expenses', 'dashboardProfitChart', revenueTrendSeries.map((item, idx) => ({ label: item.label, total: (Number(item.total) || 0) - (Number(expenseTrendSeries[idx]?.total) || 0) })), 'line', '#b45309')}
+            ${renderAnalyticsBlock('Member Dues Trend', 'Outstanding dues over time', 'dashboardDuesChart', duesTrendSeries, 'line', '#dc2626')}
         </div>
         <div class="dashboard-recent">
             <h2>Recent Members - Men</h2>
@@ -606,9 +666,21 @@ function renderDashboard(data) {
         </div>
     `;
     document.getElementById('contentBody').innerHTML = html;
+    renderReportCharts([
+        { id: 'dashboardMembersChart', type: 'line', series: memberGrowthSeries, color: '#166534' },
+        { id: 'dashboardRevenueChart', type: 'line', series: revenueTrendSeries, color: '#0369a1' },
+        { id: 'dashboardAttendanceChart', type: 'line', series: attendanceTrendSeries, color: '#7c3aed' },
+        { id: 'dashboardExpenseChart', type: 'line', series: expenseTrendSeries, color: '#dc2626' },
+        { id: 'dashboardProfitChart', type: 'line', series: revenueTrendSeries.map((item, idx) => ({ label: item.label, total: (Number(item.total) || 0) - (Number(expenseTrendSeries[idx]?.total) || 0) })), color: '#b45309' },
+        { id: 'dashboardDuesChart', type: 'line', series: duesTrendSeries, color: '#dc2626' }
+    ]);
 }
 
 function forceOpenGate(gateType) {
+    if (!requireAdminAccess('force open the gate')) {
+        return;
+    }
+
     if (!confirm(`Are you sure you want to force open the ${gateType === 'checkin' ? 'Check-In' : 'Check-Out'} gate?`)) {
         return;
     }
@@ -626,6 +698,36 @@ function forceOpenGate(gateType) {
             console.error('Force open error:', err);
             Utils.showNotification('Error sending force open command', 'error');
         });
+}
+
+function getMemberStatusFromDue(member = {}) {
+    const totalDue = Number(member.total_due_amount || 0);
+    const monthlyFee = Number(member.monthly_fee || 0);
+    const joinDate = member.join_date || member.created_at || null;
+    const dueDate = member.next_fee_due_date || joinDate;
+
+    if (totalDue <= 0) return 'active';
+    if (monthlyFee > 0 && totalDue >= (monthlyFee * 2) - 0.01) return 'inactive';
+
+    if (dueDate) {
+        const due = new Date(dueDate);
+        const now = new Date();
+        const threshold = new Date(now.getFullYear(), now.getMonth() - 2, now.getDate());
+        if (!Number.isNaN(due.getTime()) && due <= threshold) {
+            return 'inactive';
+        }
+    }
+
+    return 'active';
+}
+
+function normalizeMemberStatus(member = {}) {
+    const calculatedStatus = getMemberStatusFromDue(member);
+    return {
+        ...member,
+        status: ['active', 'inactive'].includes(member.status) ? member.status : calculatedStatus,
+        calculated_status: calculatedStatus
+    };
 }
 
 function loadMembers() {
@@ -651,9 +753,10 @@ function loadMembers() {
                     <button class="btn ${memberStatusFilter === 'active' ? 'btn-primary' : 'btn-secondary'}" id="activeOnlyBtn">Active only</button>
                     <button class="btn ${memberStatusFilter === 'inactive' ? 'btn-primary' : 'btn-secondary'}" id="inactiveOnlyBtn">Inactive only</button>
                     <button class="btn ${memberStatusFilter === null ? 'btn-primary' : 'btn-secondary'}" id="allMembersBtn">Show all</button>
-                    <button class="btn btn-primary" id="addMemberBtn">Add New Member</button>
+                    ${isAdminUser() ? '<button class="btn btn-primary" id="addMemberBtn">Add New Member</button>' : ''}
                 </div>
             </div>
+            <div id="membersAnalyticsContainer" style="margin-bottom:1.5rem;"></div>
             <div id="membersTableContainer"></div>
         </div>
     `;
@@ -716,7 +819,35 @@ function loadMembers() {
         });
     }
 
+    loadMembersAnalytics();
     loadMembersTable(1); // Initial load of the members table
+}
+
+function loadMembersAnalytics() {
+    const container = document.getElementById('membersAnalyticsContainer');
+    if (!container) return;
+
+    fetch('api/reports.php?action=members')
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load members analytics');
+            const data = result.data || {};
+            container.innerHTML = `
+                <div class="activity-analytics-grid">
+                    ${renderAnalyticsBlock('Monthly Growth', 'New member trend', 'membersPageGrowthChart', data.charts?.monthly_growth || [], 'line', '#166534')}
+                    ${renderAnalyticsBlock('Gender Split', 'Men vs women', 'membersPageGenderChart', data.charts?.gender_split || [], 'bar', '#0369a1')}
+                    ${renderAnalyticsBlock('Status Split', 'Active and inactive overview', 'membersPageStatusChart', data.charts?.active_split || [], 'bar', '#b45309')}
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'membersPageGrowthChart', type: 'line', series: data.charts?.monthly_growth || [], color: '#166534' },
+                { id: 'membersPageGenderChart', type: 'bar', series: data.charts?.gender_split || [], color: '#0369a1' },
+                { id: 'membersPageStatusChart', type: 'bar', series: data.charts?.active_split || [], color: '#b45309' }
+            ]);
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="error">${err.message}</div>`;
+        });
 }
 
 // End of DOMContentLoaded setup
@@ -751,7 +882,17 @@ function loadMembersTable(page = 1) {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                renderMembersTable(data.data, data.pagination);
+                const normalizedMembers = (data.data || []).map(normalizeMemberStatus);
+                const filteredMembers = memberStatusFilter
+                    ? normalizedMembers.filter(member => member.calculated_status === memberStatusFilter)
+                    : normalizedMembers;
+                renderMembersTable(filteredMembers, {
+                    ...(data.pagination || {}),
+                    total: filteredMembers.length,
+                    pages: 1,
+                    page: 1,
+                    limit: filteredMembers.length || limit
+                });
             } else {
                 document.getElementById('membersTableContainer').innerHTML =
                     '<div class="error">Failed to load members</div>';
@@ -796,12 +937,14 @@ function renderMembersTable(members, pagination) {
                             <td data-label="Email">${m.email || 'N/A'}</td>
                             <td data-label="Join Date">${Utils.formatDate(m.join_date)}</td>
                             <td data-label="Due Amount">${m.total_due_amount > 0 ? `<span style="color: red; font-weight: bold;">${Utils.formatCurrency(m.total_due_amount)}</span>` : '<span style="color: green;">No Due</span>'}</td>
-                            <td data-label="Status"><span class="status-badge status-${m.status}">${m.status}</span></td>
+                            <td data-label="Status"><span class="status-badge status-${m.calculated_status || m.status}">${m.calculated_status || m.status}</span></td>
                             <td data-label="Actions">
                                 <button class="btn btn-sm btn-secondary" onclick="openMemberProfile('${m.member_code}', '${currentGender}')">Open</button>
-                                <button class="btn btn-sm btn-primary" onclick="editMember(${m.id})">Edit</button>
-                                <button class="btn btn-sm btn-success" onclick="updateFee(${m.id}, '${m.member_code}')">Take Fee</button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteMember(${m.id})">Delete</button>
+                                ${isAdminUser() ? `
+                                    <button class="btn btn-sm btn-primary" onclick="editMember(${m.id})">Edit</button>
+                                    <button class="btn btn-sm btn-success" onclick="updateFee(${m.id}, '${m.member_code}')">Take Fee</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteMember(${m.id})">Delete</button>
+                                ` : ''}
                             </td>
                         </tr>
                     `).join('') : `
@@ -831,6 +974,8 @@ function renderMembersTable(members, pagination) {
 }
 
 function showAddMemberForm() {
+    if (!requireAdminAccess('add members')) return;
+
     const html = `
         <div class="modal" id="memberModal">
             <div class="modal-content">
@@ -1111,6 +1256,8 @@ function stopRFIDScan(message, type) {
 }
 
 function editMember(id) {
+    if (!requireAdminAccess('edit members')) return;
+
     fetch(`api/members.php?action=get&id=${id}&gender=${currentGender}`)
         .then(res => res.json())
         .then(data => {
@@ -1153,6 +1300,7 @@ function editMember(id) {
 }
 
 function deleteMember(id) {
+    if (!requireAdminAccess('delete members')) return;
     if (!confirm('Are you sure you want to delete this member?')) return;
 
     fetch(`api/members.php?action=delete&id=${id}&gender=${currentGender}`, {
@@ -1203,6 +1351,7 @@ function loadAttendance() {
                     <button class="btn btn-primary" id="checkInBtn">Check In Member</button>
                 </div>
             </div>
+            <div id="attendanceAnalyticsContainer" style="margin-bottom:1.5rem;"></div>
             <div id="attendanceTableContainer"></div>
         </div>
     `;
@@ -1231,7 +1380,35 @@ function loadAttendance() {
         });
     }
 
+    loadAttendanceAnalytics();
     loadAttendanceTable();
+}
+
+function loadAttendanceAnalytics() {
+    const container = document.getElementById('attendanceAnalyticsContainer');
+    if (!container) return;
+
+    const range = window.analyticsRanges?.attendance || '30d';
+    fetch(`api/reports.php?action=attendance&range=${encodeURIComponent(range)}`)
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load attendance analytics');
+            const data = result.data || {};
+            container.innerHTML = `
+                ${renderRangeSelector('attendance', range)}
+                <div class="activity-analytics-grid">
+                    ${renderAnalyticsBlock('Daily Attendance', 'Last 30 days trend', 'attendancePageDailyChart', data.charts?.daily_attendance || [], 'line', '#166534')}
+                    ${renderAnalyticsBlock('Gender Attendance', 'Men vs women visits', 'attendancePageGenderChart', data.charts?.gender_attendance || [], 'bar', '#0369a1')}
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'attendancePageDailyChart', type: 'line', series: data.charts?.daily_attendance || [], color: '#166534' },
+                { id: 'attendancePageGenderChart', type: 'bar', series: data.charts?.gender_attendance || [], color: '#0369a1' }
+            ]);
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="error">${err.message}</div>`;
+        });
 }
 
 function handleCheckIn() {
@@ -1491,9 +1668,11 @@ function loadPayments() {
                     </div>
                     <button class="btn ${paymentsDefaultersFilter ? 'btn-warning' : 'btn-secondary'}" id="showDefaultersBtn">Show Late Payers</button>
                     <button class="btn ${memberStatusFilter === 'inactive' ? 'btn-primary' : 'btn-secondary'}" id="showInactivePaymentsBtn">Inactive Members</button>
-                    <button class="btn btn-primary" id="addPaymentBtn">Take Payment</button>
+                    <button class="btn ${memberStatusFilter === 'active' && paymentsDefaultersFilter ? 'btn-primary' : 'btn-secondary'}" id="showActivePaymentsBtn">Active Members</button>
+                    ${isAdminUser() ? '<button class="btn btn-primary" id="addPaymentBtn">Take Payment</button>' : ''}
                 </div>
             </div>
+            <div id="paymentsAnalyticsContainer" style="margin-bottom:1.5rem;"></div>
             <div id="paymentsTableContainer"></div>
         </div>
     `;
@@ -1579,25 +1758,65 @@ function loadPayments() {
 
     // Setup Inactive Payments Button
     const showInactivePaymentsBtn = document.getElementById('showInactivePaymentsBtn');
+    const showActivePaymentsBtn = document.getElementById('showActivePaymentsBtn');
     if (showInactivePaymentsBtn) {
         showInactivePaymentsBtn.addEventListener('click', function () {
-            if (memberStatusFilter === 'inactive') {
-                memberStatusFilter = null; // Toggle off
-                showInactivePaymentsBtn.classList.remove('btn-primary');
-                showInactivePaymentsBtn.classList.add('btn-secondary');
-            } else {
-                memberStatusFilter = 'inactive'; // Toggle on
-                showInactivePaymentsBtn.classList.remove('btn-secondary');
-                showInactivePaymentsBtn.classList.add('btn-primary');
+            memberStatusFilter = memberStatusFilter === 'inactive' ? null : 'inactive';
+            if (showActivePaymentsBtn) {
+                showActivePaymentsBtn.classList.remove('btn-primary');
+                showActivePaymentsBtn.classList.add('btn-secondary');
             }
-            loadPaymentsTable(1);
+            loadPayments();
         });
     }
 
+    if (showActivePaymentsBtn) {
+        showActivePaymentsBtn.addEventListener('click', function () {
+            memberStatusFilter = memberStatusFilter === 'active' ? null : 'active';
+            if (showInactivePaymentsBtn) {
+                showInactivePaymentsBtn.classList.remove('btn-primary');
+                showInactivePaymentsBtn.classList.add('btn-secondary');
+            }
+            loadPayments();
+        });
+    }
+
+    loadPaymentsAnalytics();
     loadPaymentsTable();
 }
 
+function loadPaymentsAnalytics() {
+    const container = document.getElementById('paymentsAnalyticsContainer');
+    if (!container) return;
+
+    const range = window.analyticsRanges?.payments || '30d';
+    fetch(`api/reports.php?action=payments&range=${encodeURIComponent(range)}`)
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load payments analytics');
+            const data = result.data || {};
+            container.innerHTML = `
+                ${renderRangeSelector('payments', range)}
+                <div class="activity-analytics-grid">
+                    ${renderAnalyticsBlock('Daily Revenue', 'Last 30 days', 'paymentsPageDailyChart', data.charts?.daily_revenue || [], 'line', '#166534')}
+                    ${renderAnalyticsBlock('Monthly Revenue', 'Month-by-month', 'paymentsPageMonthlyChart', data.charts?.monthly_revenue || [], 'line', '#0369a1')}
+                    ${renderAnalyticsBlock('Payment Methods', 'Most used methods', 'paymentsPageMethodChart', data.charts?.payment_methods || [], 'bar', '#7c3aed')}
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'paymentsPageDailyChart', type: 'line', series: data.charts?.daily_revenue || [], color: '#166534' },
+                { id: 'paymentsPageMonthlyChart', type: 'line', series: data.charts?.monthly_revenue || [], color: '#0369a1' },
+                { id: 'paymentsPageMethodChart', type: 'bar', series: data.charts?.payment_methods || [], color: '#7c3aed' }
+            ]);
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="error">${err.message}</div>`;
+        });
+}
+
 function showAddPaymentForm() {
+    if (!requireAdminAccess('record payments')) return;
+
     const html = `
         <div class="modal" id="paymentModal">
             <div class="modal-content">
@@ -1737,7 +1956,8 @@ function loadPaymentsTable(page = 1) {
     const year = paymentsViewMode === 'current' ? new Date().getFullYear() : paymentsSelectedYear;
     const search = document.getElementById('paymentSearch')?.value || '';
     const defaultersParam = paymentsDefaultersFilter ? '&defaulters=1' : '';
-    const statusParam = memberStatusFilter ? `&status=${memberStatusFilter}` : '';
+    const effectivePaymentStatusFilter = paymentsDefaultersFilter ? memberStatusFilter : (memberStatusFilter === 'inactive' ? 'inactive' : null);
+    const statusParam = effectivePaymentStatusFilter ? `&status=${effectivePaymentStatusFilter}` : '';
 
     const container = document.getElementById('paymentsTableContainer');
     if (!container) return;
@@ -1772,11 +1992,22 @@ function loadPaymentsTable(page = 1) {
                 let html = '';
 
                 if (data.defaulters) {
+                    const defaulters = (data.data || []).map(normalizeMemberStatus).filter(member => {
+                        return effectivePaymentStatusFilter ? member.calculated_status === effectivePaymentStatusFilter : true;
+                    });
+                    const defaulterPagination = {
+                        ...(data.pagination || {}),
+                        total: defaulters.length,
+                        pages: 1,
+                        page: 1,
+                        limit: defaulters.length || (data.pagination?.limit || 20)
+                    };
+
                     // Defaulters view
                     html = `
                         <div style="margin-bottom: 1rem;">
                             <h3>Late Payers</h3>
-                            <p>Members not paid for 1 month or more: ${data.pagination.total}</p>
+                            <p>Members not paid for 1 month or more: ${defaulterPagination.total}</p>
                         </div>
                         <table class="data-table">
                             <thead>
@@ -1792,18 +2023,18 @@ function loadPaymentsTable(page = 1) {
                                 </tr>
                             </thead>
                             <tbody>
-                                ${data.data.length > 0 ? data.data.map((p, idx) => {
+                                ${defaulters.length > 0 ? defaulters.map((p, idx) => {
                         const daysSince = parseInt(p.days_since_payment) || 0;
                         return `
                                     <tr>
-                                        <td data-label="#">${((parseInt(data.pagination.page) || 1) - 1) * (parseInt(data.pagination.limit) || 20) + idx + 1}</td>
+                                        <td data-label="#">${idx + 1}</td>
                                         <td data-label="Member Code">${p.member_code}</td>
                                         <td data-label="Name">${p.name}</td>
                                         <td data-label="Monthly Fee">${Utils.formatCurrency(p.monthly_fee || 0)}</td>
                                         <td data-label="Total Due"><span style="color: red; font-weight: bold;">${Utils.formatCurrency(p.total_due_amount || 0)}</span></td>
                                         <td data-label="Last Payment">${p.last_payment_date ? Utils.formatDate(p.last_payment_date) : 'Never'}</td>
                                         <td data-label="Days Since"><span style="color: ${daysSince > 60 ? 'red' : 'orange'}; font-weight: bold;">${daysSince} days</span></td>
-                                        <td data-label="Status"><span class="status-badge status-${p.status}">${p.status}</span></td>
+                                        <td data-label="Status"><span class="status-badge status-${p.calculated_status || p.status}">${p.calculated_status || p.status}</span></td>
                                     </tr>
                                 `;
                     }).join('') : '<tr><td colspan="8" style="text-align: center;"><div class="empty-state"><strong>No late payers found</strong>Everyone in this view is up to date right now.</div></td></tr>'}
@@ -1889,6 +2120,8 @@ function loadPaymentsTable(page = 1) {
 }
 
 function updateFee(memberId, memberCode) {
+    if (!requireAdminAccess('take fees')) return;
+
     // Get member details first
     fetch(`api/members.php?action=get&id=${memberId}&gender=${currentGender}`)
         .then(res => res.json())
@@ -2228,6 +2461,815 @@ function saveFeeUpdate() {
         });
 }
 
+function loadStaff() {
+    const html = `
+        <div class="members-section">
+            ${renderSectionGuideCard({
+                chip: 'Staff Help',
+                title: 'Manage staff accounts',
+                description: 'Create front desk users and control who can log in to the dashboard.',
+                steps: [
+                    'Add a staff user with name, username, and password.',
+                    'Use role Admin only for trusted full-access users.',
+                    'Use role Staff for reception/front desk users.'
+                ]
+            })}
+            <div class="section-header">
+                <div class="section-actions">
+                    <input type="text" id="staffSearch" placeholder="Search by name, username, or role" class="search-input">
+                    <button class="btn btn-primary" id="addStaffBtn">Add Staff User</button>
+                </div>
+            </div>
+            <div id="staffTableContainer"></div>
+        </div>
+    `;
+    document.getElementById('contentBody').innerHTML = html;
+
+    document.getElementById('staffSearch')?.addEventListener('input', Utils.debounce(() => loadStaffTable(1), 300));
+    document.getElementById('addStaffBtn')?.addEventListener('click', showStaffForm);
+    loadStaffTable(1);
+}
+
+function loadStaffTable(page = 1) {
+    const search = document.getElementById('staffSearch')?.value || '';
+    fetch(`api/staff.php?action=list&page=${page}&search=${encodeURIComponent(search)}`)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Failed to load staff');
+            const rows = data.data || [];
+            const pagination = data.pagination || { page: 1, pages: 1, limit: 20 };
+            const startIndex = ((pagination.page || 1) - 1) * (pagination.limit || 20);
+            document.getElementById('staffTableContainer').innerHTML = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.length ? rows.map((row, idx) => `
+                            <tr>
+                                <td data-label="#">${startIndex + idx + 1}</td>
+                                <td data-label="Name">${row.name || '-'}</td>
+                                <td data-label="Username">${row.username}</td>
+                                <td data-label="Role"><span class="status-badge status-active">${row.role}</span></td>
+                                <td data-label="Created">${Utils.formatDate(row.created_at)}</td>
+                                <td data-label="Actions">
+                                    <button class="btn btn-sm btn-primary" onclick="editStaff(${row.id})">Edit</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteStaff(${row.id})">Delete</button>
+                                </td>
+                            </tr>
+                        `).join('') : '<tr><td colspan="6"><div class="empty-state"><strong>No staff found</strong>Add your first staff user here.</div></td></tr>'}
+                    </tbody>
+                </table>
+                ${pagination.pages > 1 ? `
+                    <div class="pagination" style="margin-top:1rem;display:flex;gap:1rem;justify-content:center;align-items:center;">
+                        <button class="btn btn-secondary" ${pagination.page === 1 ? 'disabled' : ''} onclick="loadStaffTable(${pagination.page - 1})">Previous</button>
+                        <span>Page ${pagination.page} of ${pagination.pages}</span>
+                        <button class="btn btn-secondary" ${pagination.page === pagination.pages ? 'disabled' : ''} onclick="loadStaffTable(${pagination.page + 1})">Next</button>
+                    </div>
+                ` : ''}
+            `;
+        })
+        .catch(err => {
+            document.getElementById('staffTableContainer').innerHTML = `<div class="error">${err.message}</div>`;
+        });
+}
+
+function showStaffForm(staff = null) {
+    const isEdit = !!staff;
+    const html = `
+        <div class="modal" id="staffModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>${isEdit ? 'Edit Staff User' : 'Add Staff User'}</h2>
+                    <button class="modal-close" onclick="closeStaffModal()">&times;</button>
+                </div>
+                <form id="staffForm" class="modal-body">
+                    <input type="hidden" id="staffId" value="${staff?.id || ''}">
+                    <div class="form-group"><label>Name *</label><input type="text" id="staffName" value="${staff?.name || ''}" required></div>
+                    <div class="form-group"><label>Username *</label><input type="text" id="staffUsername" value="${staff?.username || ''}" required></div>
+                    <div class="form-group"><label>Password ${isEdit ? '(leave empty to keep old password)' : '*'}</label><input type="password" id="staffPassword" ${isEdit ? '' : 'required'}></div>
+                    <div class="form-group"><label>Role</label><select id="staffRole"><option value="staff" ${staff?.role === 'staff' ? 'selected' : ''}>Staff</option><option value="admin" ${staff?.role === 'admin' ? 'selected' : ''}>Admin</option></select></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeStaffModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Staff User</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+    document.getElementById('staffForm')?.addEventListener('submit', function (e) {
+        e.preventDefault();
+        saveStaff();
+    });
+}
+
+function closeStaffModal() {
+    document.getElementById('staffModal')?.remove();
+}
+
+function saveStaff() {
+    const id = document.getElementById('staffId')?.value || null;
+    const payload = {
+        id,
+        name: document.getElementById('staffName')?.value?.trim(),
+        username: document.getElementById('staffUsername')?.value?.trim(),
+        password: document.getElementById('staffPassword')?.value || '',
+        role: document.getElementById('staffRole')?.value || 'staff'
+    };
+    const action = id ? 'update' : 'create';
+    fetch(`api/staff.php?action=${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Failed to save staff');
+            Utils.showNotification(data.message || 'Saved successfully', 'success');
+            closeStaffModal();
+            loadStaffTable(1);
+        })
+        .catch(err => Utils.showNotification(err.message, 'error'));
+}
+
+function editStaff(id) {
+    fetch(`api/staff.php?action=list&page=1&limit=100`)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Failed to load staff');
+            const staff = (data.data || []).find(item => String(item.id) === String(id));
+            if (!staff) throw new Error('Staff user not found');
+            showStaffForm(staff);
+        })
+        .catch(err => Utils.showNotification(err.message, 'error'));
+}
+
+function deleteStaff(id) {
+    if (!confirm('Are you sure you want to delete this staff user?')) return;
+    fetch(`api/staff.php?action=delete&id=${id}`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Failed to delete staff');
+            Utils.showNotification(data.message || 'Deleted successfully', 'success');
+            loadStaffTable(1);
+        })
+        .catch(err => Utils.showNotification(err.message, 'error'));
+}
+
+function getActivityActionLabel(action) {
+    const labels = {
+        member_created: 'Member Created',
+        member_updated: 'Member Updated',
+        member_deleted: 'Member Deleted',
+        member_due_date_updated: 'Due Date Updated',
+        payment_recorded: 'Payment Recorded',
+        expense_created: 'Expense Added',
+        expense_updated: 'Expense Updated',
+        expense_deleted: 'Expense Deleted',
+        staff_created: 'Staff Created',
+        staff_updated: 'Staff Updated',
+        staff_deleted: 'Staff Deleted'
+    };
+    return labels[action] || action || 'Unknown';
+}
+
+function getActivityActionClass(action) {
+    if ((action || '').includes('deleted')) return 'danger';
+    if ((action || '').includes('created') || (action || '').includes('recorded')) return 'success';
+    if ((action || '').includes('updated')) return 'warning';
+    return 'neutral';
+}
+
+function formatActivityDetails(details) {
+    if (!details) return '<span class="activity-muted">No extra details</span>';
+    const entries = Object.entries(details);
+    if (!entries.length) return '<span class="activity-muted">No extra details</span>';
+    return entries.map(([key, value]) => `
+        <span class="activity-detail-pill">
+            <strong>${String(key).replace(/_/g, ' ')}:</strong> ${value === null || value === '' ? '-' : value}
+        </span>
+    `).join('');
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function openActivityModal(activity) {
+    const detailsJson = activity?.details ? JSON.stringify(activity.details, null, 2) : 'No extra details';
+    const modalHtml = `
+        <div class="modal" id="activityDetailsModal">
+            <div class="modal-content activity-modal-content">
+                <div class="modal-header">
+                    <h2>${escapeHtml(getActivityActionLabel(activity.action))}</h2>
+                    <button class="modal-close" onclick="closeActivityModal()">&times;</button>
+                </div>
+                <div class="modal-body activity-modal-body">
+                    <div class="activity-modal-grid">
+                        <div class="activity-meta-item"><span class="activity-meta-label">Staff</span><strong>${escapeHtml(activity.admin_username || '-')}</strong></div>
+                        <div class="activity-meta-item"><span class="activity-meta-label">Time</span><strong>${escapeHtml(activity.created_at || '-')}</strong></div>
+                        <div class="activity-meta-item"><span class="activity-meta-label">Action</span><strong>${escapeHtml(activity.action || '-')}</strong></div>
+                        <div class="activity-meta-item"><span class="activity-meta-label">Target Type</span><strong>${escapeHtml(activity.target_type || '-')}</strong></div>
+                        <div class="activity-meta-item"><span class="activity-meta-label">Target ID</span><strong>${escapeHtml(activity.target_id || '-')}</strong></div>
+                        <div class="activity-meta-item"><span class="activity-meta-label">IP Address</span><strong>${escapeHtml(activity.ip_address || '-')}</strong></div>
+                    </div>
+                    <div class="activity-details-wrap" style="margin-top:1rem;">
+                        <div class="activity-details-title">Quick Details</div>
+                        <div class="activity-details-pills">${formatActivityDetails(activity.details)}</div>
+                    </div>
+                    <div class="activity-details-wrap" style="margin-top:1rem;">
+                        <div class="activity-details-title">Full JSON Details</div>
+                        <pre class="activity-json-view">${escapeHtml(detailsJson)}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+function closeActivityModal() {
+    document.getElementById('activityDetailsModal')?.remove();
+}
+
+window.chartMeta = window.chartMeta || {};
+
+function attachChartTooltip(canvas, points, formatter) {
+    if (!canvas) return;
+    canvas.onmousemove = function (event) {
+        const rect = canvas.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
+        const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+        const hit = points.find(point => Math.hypot(point.x - x, point.y - y) < 10);
+        let tooltip = canvas.parentElement.querySelector('.chart-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.className = 'chart-tooltip';
+            canvas.parentElement.style.position = 'relative';
+            canvas.parentElement.appendChild(tooltip);
+        }
+        if (hit) {
+            tooltip.style.display = 'block';
+            tooltip.style.left = `${event.offsetX + 12}px`;
+            tooltip.style.top = `${event.offsetY + 12}px`;
+            tooltip.innerHTML = formatter(hit.data);
+        } else {
+            tooltip.style.display = 'none';
+        }
+    };
+    canvas.onmouseleave = function () {
+        const tooltip = canvas.parentElement.querySelector('.chart-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
+    };
+}
+
+function drawChartAxes(ctx, width, height, padding, maxValue, tickCount = 4) {
+    ctx.strokeStyle = '#d1d5db';
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    ctx.moveTo(padding, padding / 2);
+    ctx.lineTo(padding, height - padding);
+    ctx.lineTo(width - padding, height - padding);
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px Arial';
+
+    for (let i = 0; i <= tickCount; i++) {
+        const value = Math.round((maxValue / tickCount) * i);
+        const y = height - padding - ((value / maxValue) * (height - padding * 2));
+        ctx.beginPath();
+        ctx.moveTo(padding - 5, y);
+        ctx.lineTo(padding, y);
+        ctx.stroke();
+        ctx.fillText(String(value), 6, y + 4);
+    }
+}
+
+function renderSimpleLineChart(canvasId, series = [], color = '#166534') {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    if (!series.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Arial';
+        ctx.fillText('No data available', 20, 30);
+        return;
+    }
+
+    const padding = 30;
+    const maxValue = Math.max(1, ...series.map(item => Number(item.total) || 0));
+    const stepX = series.length > 1 ? (width - padding * 2) / (series.length - 1) : 0;
+
+    drawChartAxes(ctx, width, height, padding, maxValue);
+
+    const points = [];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    series.forEach((item, index) => {
+        const x = padding + index * stepX;
+        const y = height - padding - ((Number(item.total) || 0) / maxValue) * (height - padding * 2);
+        points.push({ x, y, data: item });
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+
+        if (index === 0 || index === series.length - 1 || index % Math.ceil(series.length / 4) === 0) {
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px Arial';
+            ctx.fillText(String(item.label).slice(0, 8), x - 12, height - 10);
+        }
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    points.forEach(point => {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    attachChartTooltip(canvas, points, item => `${item.label}: ${item.total}`);
+}
+
+function renderSimpleBarChart(canvasId, series = [], color = '#0369a1') {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    if (!series.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Arial';
+        ctx.fillText('No data available', 20, 30);
+        return;
+    }
+
+    const padding = 30;
+    const maxValue = Math.max(1, ...series.map(item => Number(item.total) || 0));
+    const barArea = width - padding * 2;
+    const barWidth = Math.max(18, (barArea / series.length) * 0.6);
+    const gap = series.length > 0 ? barArea / series.length : 0;
+    const points = [];
+
+    drawChartAxes(ctx, width, height, padding, maxValue);
+
+    series.forEach((item, index) => {
+        const value = Number(item.total) || 0;
+        const barHeight = (value / maxValue) * (height - padding * 2);
+        const x = padding + index * gap + (gap - barWidth) / 2;
+        const y = height - padding - barHeight;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, barWidth, barHeight);
+        points.push({ x: x + barWidth / 2, y, data: item });
+
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '10px Arial';
+        ctx.fillText(String(item.label).slice(0, 8), x, height - 10);
+    });
+
+    attachChartTooltip(canvas, points, item => `${item.label}: ${item.total}`);
+}
+
+function loadActivityAnalytics() {
+    const adminUsername = document.getElementById('activityUserSearch')?.value || '';
+    const logAction = document.getElementById('activityActionSearch')?.value || '';
+    const startDate = document.getElementById('activityStartDate')?.value || '';
+    const endDate = document.getElementById('activityEndDate')?.value || '';
+
+    fetch(`api/admin-activity.php?action=analytics&admin_username=${encodeURIComponent(adminUsername)}&log_action=${encodeURIComponent(logAction)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`)
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load analytics');
+            const analytics = result.data || {};
+            const host = document.getElementById('activityAnalyticsContainer');
+            if (!host) return;
+
+            host.innerHTML = `
+                <div class="activity-analytics-grid">
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>Daily Activity</h3><small>Day-by-day trend</small></div>
+                        <canvas id="activityDailyChart" width="520" height="220"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>Weekly Activity</h3><small>Week-by-week trend</small></div>
+                        <canvas id="activityWeeklyChart" width="520" height="220"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>Monthly Activity</h3><small>Month-by-month trend</small></div>
+                        <canvas id="activityMonthlyChart" width="520" height="220"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>Staff Contribution</h3><small>Who is doing most actions</small></div>
+                        <canvas id="activityStaffChart" width="520" height="220"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>Action Breakdown</h3><small>Most common action types</small></div>
+                        <canvas id="activityActionChart" width="520" height="220"></canvas>
+                    </div>
+                </div>
+            `;
+
+            renderSimpleLineChart('activityDailyChart', analytics.daily || [], '#166534');
+            renderSimpleLineChart('activityWeeklyChart', analytics.weekly || [], '#0369a1');
+            renderSimpleLineChart('activityMonthlyChart', analytics.monthly || [], '#b45309');
+            renderSimpleBarChart('activityStaffChart', analytics.staff || [], '#166534');
+            renderSimpleBarChart('activityActionChart', analytics.actions || [], '#7c3aed');
+        })
+        .catch(err => {
+            const host = document.getElementById('activityAnalyticsContainer');
+            if (host) host.innerHTML = `<div class="error">${err.message}</div>`;
+        });
+}
+
+window.chartVisibility = window.chartVisibility || {};
+
+function toggleChartDataset(canvasId, label, buttonEl = null) {
+    if (!window.chartVisibility[canvasId]) window.chartVisibility[canvasId] = {};
+    window.chartVisibility[canvasId][label] = !window.chartVisibility[canvasId][label];
+
+    if (buttonEl) {
+        buttonEl.classList.toggle('is-muted', !!window.chartVisibility[canvasId][label]);
+    }
+
+    const config = window.chartMeta?.[canvasId];
+    if (!config) return;
+
+    renderReportCharts([config]);
+}
+
+function renderChartLegend(items = [], canvasId = '') {
+    if (!items.length) return '';
+    return `
+        <div class="chart-legend">
+            ${items.map(item => {
+                const hidden = window.chartVisibility[canvasId]?.[item.label];
+                return `
+                    <button type="button" class="chart-legend-item ${hidden ? 'is-muted' : ''}" onclick="toggleChartDataset('${canvasId}', '${item.label.replace(/'/g, "\\'")}', this)">
+                        <span class="chart-legend-swatch" style="background:${item.color}"></span>
+                        <span>${item.label}</span>
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function renderMultiLineChart(canvasId, datasets = []) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    const visibleDatasets = datasets.filter(dataset => !window.chartVisibility?.[canvasId]?.[dataset.label]);
+    const labels = visibleDatasets[0]?.series?.map(item => item.label) || datasets[0]?.series?.map(item => item.label) || [];
+    if (!labels.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Arial';
+        ctx.fillText('No data available', 20, 30);
+        return;
+    }
+
+    const padding = 30;
+    const allValues = visibleDatasets.flatMap(ds => ds.series.map(item => Number(item.total) || 0));
+    const maxValue = Math.max(1, ...allValues);
+    const stepX = labels.length > 1 ? (width - padding * 2) / (labels.length - 1) : 0;
+
+    drawChartAxes(ctx, width, height, padding, maxValue);
+
+    const tooltipPoints = [];
+    visibleDatasets.forEach(dataset => {
+        ctx.strokeStyle = dataset.color;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+
+        let lastPoint = null;
+        dataset.series.forEach((item, index) => {
+            const x = padding + index * stepX;
+            const y = height - padding - ((Number(item.total) || 0) / maxValue) * (height - padding * 2);
+            tooltipPoints.push({ x, y, data: { ...item, dataset: dataset.label } });
+            lastPoint = { x, y, item };
+            if (index === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                const prevX = padding + (index - 1) * stepX;
+                const prevY = height - padding - ((Number(dataset.series[index - 1].total) || 0) / maxValue) * (height - padding * 2);
+                const cpX = (prevX + x) / 2;
+                ctx.bezierCurveTo(cpX, prevY, cpX, y, x, y);
+            }
+        });
+        ctx.stroke();
+
+        if (lastPoint) {
+            dataset._lastPoint = lastPoint;
+        }
+    });
+
+    const placedLabels = [];
+    visibleDatasets.forEach(dataset => {
+        const lastPoint = dataset._lastPoint;
+        if (!lastPoint) return;
+
+        let labelX = Math.min(lastPoint.x + 8, width - 120);
+        let labelY = Math.max(lastPoint.y - 6, 14);
+
+        while (placedLabels.some(y => Math.abs(y - labelY) < 14)) {
+            labelY += 14;
+            if (labelY > height - 20) {
+                labelY = Math.max(14, lastPoint.y - 20);
+                break;
+            }
+        }
+        placedLabels.push(labelY);
+
+        ctx.fillStyle = dataset.color;
+        ctx.font = 'bold 11px Arial';
+        const valueText = `${dataset.label}: ${Number(lastPoint.item.total || 0).toFixed(0)}`;
+        ctx.fillText(valueText, labelX, labelY);
+    });
+
+    labels.forEach((label, index) => {
+        const x = padding + index * stepX;
+        if (index === 0 || index === labels.length - 1 || index % Math.ceil(labels.length / 4) === 0) {
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px Arial';
+            ctx.fillText(String(label).slice(0, 8), x - 12, height - 10);
+        }
+    });
+
+    attachChartTooltip(canvas, tooltipPoints, item => `${item.dataset}<br>${item.label}: ${item.total}`);
+}
+
+function renderReportCharts(configs = []) {
+    setTimeout(() => {
+        configs.forEach(config => {
+            window.chartMeta = window.chartMeta || {};
+            window.chartMeta[config.id] = config;
+            if (config.type === 'multi-line') {
+                renderMultiLineChart(config.id, config.datasets || []);
+            } else if (config.type === 'line') {
+                renderSimpleLineChart(config.id, config.series || [], config.color);
+            } else {
+                renderSimpleBarChart(config.id, config.series || [], config.color);
+            }
+        });
+    }, 0);
+}
+
+function renderAnalyticsBlock(title, subtitle, chartId, series = [], type = 'line', color = '#166534') {
+    const empty = !series || !series.length;
+    return `
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <h3>${title}</h3>
+                <small>${subtitle}</small>
+            </div>
+            <canvas id="${chartId}" width="520" height="220"></canvas>
+            ${empty ? '<div class="activity-muted" style="margin-top:0.75rem;">No chart data available yet.</div>' : ''}
+        </div>
+    `;
+}
+
+function renderRangeSelector(sectionKey, activeRange = '30d') {
+    const ranges = [
+        ['7d', '7D'],
+        ['30d', '30D'],
+        ['3m', '3M'],
+        ['6m', '6M'],
+        ['12m', '12M']
+    ];
+    return `
+        <div class="analytics-range-selector">
+            ${ranges.map(([value, label]) => `<button class="btn ${activeRange === value ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="setAnalyticsRange('${sectionKey}', '${value}')">${label}</button>`).join('')}
+        </div>
+    `;
+}
+
+window.analyticsRanges = window.analyticsRanges || {
+    reports: '30d',
+    payments: '30d',
+    attendance: '30d',
+    expenses: '30d'
+};
+
+function setAnalyticsRange(sectionKey, range) {
+    window.analyticsRanges[sectionKey] = range;
+    if (sectionKey === 'payments') loadPaymentsAnalytics();
+    else if (sectionKey === 'attendance') loadAttendanceAnalytics();
+    else if (sectionKey === 'expenses') loadExpensesAnalytics();
+    else if (sectionKey === 'reports') {
+        const activeCard = document.querySelector('.report-card.active-report');
+        if (activeCard?.dataset?.report) generateReport(activeCard.dataset.report);
+    }
+}
+
+function loadActivityLog() {
+    const html = `
+        <div class="members-section activity-log-section">
+            ${renderSectionGuideCard({
+                chip: 'Activity Help',
+                title: 'See which staff member did what',
+                description: 'This log helps admin check member updates, payments, expenses, and staff changes.',
+                steps: [
+                    'Search by username if you want one staff member only.',
+                    'Use action type to narrow the list.',
+                    'Newest entries show at the top.'
+                ]
+            })}
+            <div class="activity-toolbar">
+                <div class="section-actions activity-filters">
+                    <input type="text" id="activityUserSearch" placeholder="Search by staff username" class="search-input">
+                    <select id="activityActionSearch" class="search-input form-control">
+                        <option value="">All actions</option>
+                        <option value="member_created">Member Created</option>
+                        <option value="member_updated">Member Updated</option>
+                        <option value="member_deleted">Member Deleted</option>
+                        <option value="member_due_date_updated">Due Date Updated</option>
+                        <option value="payment_recorded">Payment Recorded</option>
+                        <option value="expense_created">Expense Added</option>
+                        <option value="expense_updated">Expense Updated</option>
+                        <option value="expense_deleted">Expense Deleted</option>
+                        <option value="staff_created">Staff Created</option>
+                        <option value="staff_updated">Staff Updated</option>
+                        <option value="staff_deleted">Staff Deleted</option>
+                    </select>
+                    <input type="date" id="activityStartDate" class="search-input">
+                    <input type="date" id="activityEndDate" class="search-input">
+                    <button class="btn btn-primary" onclick="loadActivityLogTable(1)">Refresh</button>
+                </div>
+                <div id="activitySummaryCards" class="activity-summary-cards"></div>
+            </div>
+            <div id="activityAnalyticsContainer"></div>
+            <div id="activityLogContainer"></div>
+        </div>
+    `;
+    document.getElementById('contentBody').innerHTML = html;
+    document.getElementById('activityUserSearch')?.addEventListener('input', Utils.debounce(() => loadActivityLogTable(1), 300));
+    document.getElementById('activityActionSearch')?.addEventListener('change', () => { loadActivityLogTable(1); loadActivityAnalytics(); });
+    document.getElementById('activityStartDate')?.addEventListener('change', () => { loadActivityLogTable(1); loadActivityAnalytics(); });
+    document.getElementById('activityEndDate')?.addEventListener('change', () => { loadActivityLogTable(1); loadActivityAnalytics(); });
+    loadActivityLogTable(1);
+    loadActivityAnalytics();
+}
+
+function loadActivityLogTable(page = 1) {
+    const adminUsername = document.getElementById('activityUserSearch')?.value || '';
+    const logAction = document.getElementById('activityActionSearch')?.value || '';
+    const startDate = document.getElementById('activityStartDate')?.value || '';
+    const endDate = document.getElementById('activityEndDate')?.value || '';
+    fetch(`api/admin-activity.php?action=list&page=${page}&limit=20&admin_username=${encodeURIComponent(adminUsername)}&log_action=${encodeURIComponent(logAction)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Failed to load activity log');
+            const rows = data.data || [];
+            const pagination = data.pagination || { page: 1, pages: 1, limit: 20, total: 0 };
+            const startIndex = ((pagination.page || 1) - 1) * (pagination.limit || 20);
+
+            const uniqueUsers = new Set(rows.map(row => row.admin_username).filter(Boolean)).size;
+            const actionCounts = rows.reduce((acc, row) => {
+                acc[row.action] = (acc[row.action] || 0) + 1;
+                return acc;
+            }, {});
+            const topAction = Object.entries(actionCounts).sort((a, b) => b[1] - a[1])[0];
+
+            const staffCounts = rows.reduce((acc, row) => {
+                const key = row.admin_username || 'Unknown';
+                acc[key] = (acc[key] || 0) + 1;
+                return acc;
+            }, {});
+            const maxStaffCount = Math.max(1, ...Object.values(staffCounts));
+
+            const summaryEl = document.getElementById('activitySummaryCards');
+            if (summaryEl) {
+                summaryEl.innerHTML = `
+                    <div class="activity-summary-card">
+                        <span class="activity-summary-label">Shown Rows</span>
+                        <strong>${rows.length}</strong>
+                        <small>On this page</small>
+                    </div>
+                    <div class="activity-summary-card">
+                        <span class="activity-summary-label">Total Logs</span>
+                        <strong>${pagination.total || 0}</strong>
+                        <small>All matching entries</small>
+                    </div>
+                    <div class="activity-summary-card">
+                        <span class="activity-summary-label">Staff Seen</span>
+                        <strong>${uniqueUsers}</strong>
+                        <small>Users in this page</small>
+                    </div>
+                    <div class="activity-summary-card">
+                        <span class="activity-summary-label">Top Action</span>
+                        <strong>${topAction ? getActivityActionLabel(topAction[0]) : 'None'}</strong>
+                        <small>${topAction ? topAction[1] + ' time(s)' : 'No actions yet'}</small>
+                    </div>
+                    <div class="activity-summary-card activity-chart-card">
+                        <span class="activity-summary-label">Staff-wise Activity</span>
+                        <div class="activity-mini-chart">
+                            ${Object.entries(staffCounts).sort((a, b) => b[1] - a[1]).map(([name, count]) => `
+                                <div class="activity-bar-row">
+                                    <span class="activity-bar-label">${name}</span>
+                                    <div class="activity-bar-track">
+                                        <div class="activity-bar-fill" style="width:${Math.max(8, (count / maxStaffCount) * 100)}%"></div>
+                                    </div>
+                                    <span class="activity-bar-value">${count}</span>
+                                </div>
+                            `).join('') || '<span class="activity-muted">No staff activity yet</span>'}
+                        </div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('activityLogContainer').innerHTML = rows.length ? `
+                <div class="activity-log-grid">
+                    ${rows.map((row, idx) => `
+                        <article class="activity-card" onclick='openActivityModal(${JSON.stringify(row).replace(/'/g, '&apos;')})' role="button" tabindex="0">
+                            <div class="activity-card-top">
+                                <div>
+                                    <span class="activity-index">#${startIndex + idx + 1}</span>
+                                    <h3>${getActivityActionLabel(row.action)}</h3>
+                                </div>
+                                <span class="activity-badge ${getActivityActionClass(row.action)}">${row.action}</span>
+                            </div>
+                            <div class="activity-meta-grid">
+                                <div class="activity-meta-item">
+                                    <span class="activity-meta-label">Staff</span>
+                                    <strong>${row.admin_username || '-'}</strong>
+                                </div>
+                                <div class="activity-meta-item">
+                                    <span class="activity-meta-label">Time</span>
+                                    <strong>${row.created_at || '-'}</strong>
+                                </div>
+                                <div class="activity-meta-item">
+                                    <span class="activity-meta-label">Target</span>
+                                    <strong>${row.target_type || '-'}</strong>
+                                </div>
+                                <div class="activity-meta-item">
+                                    <span class="activity-meta-label">Target ID</span>
+                                    <strong>${row.target_id || '-'}</strong>
+                                </div>
+                            </div>
+                            <div class="activity-details-wrap">
+                                <div class="activity-details-title">Details</div>
+                                <div class="activity-details-pills">
+                                    ${formatActivityDetails(row.details)}
+                                </div>
+                            </div>
+                        </article>
+                    `).join('')}
+                </div>
+                <div class="activity-table-wrap">
+                    <table class="data-table activity-table">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Time</th><th>Staff</th><th>Action</th><th>Target</th><th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map((row, idx) => `
+                                <tr onclick='openActivityModal(${JSON.stringify(row).replace(/'/g, '&apos;')})' style="cursor:pointer;">
+                                    <td data-label="#">${startIndex + idx + 1}</td>
+                                    <td data-label="Time">${row.created_at || '-'}</td>
+                                    <td data-label="Staff">${row.admin_username || '-'}</td>
+                                    <td data-label="Action"><span class="activity-badge ${getActivityActionClass(row.action)}">${getActivityActionLabel(row.action)}</span></td>
+                                    <td data-label="Target">${row.target_type || '-'} ${row.target_id || ''}</td>
+                                    <td data-label="Details"><div class="activity-details-pills">${formatActivityDetails(row.details)}</div></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ${pagination.pages > 1 ? `
+                    <div class="pagination activity-pagination">
+                        <button class="btn btn-secondary" ${pagination.page === 1 ? 'disabled' : ''} onclick="loadActivityLogTable(${pagination.page - 1})">Previous</button>
+                        <span>Page ${pagination.page} of ${pagination.pages}</span>
+                        <button class="btn btn-secondary" ${pagination.page === pagination.pages ? 'disabled' : ''} onclick="loadActivityLogTable(${pagination.page + 1})">Next</button>
+                    </div>
+                ` : ''}
+            ` : '<div class="empty-state"><strong>No activity found</strong>No admin/staff action has been logged yet.</div>';
+        })
+        .catch(err => {
+            document.getElementById('activityLogContainer').innerHTML = `<div class="error">${err.message}</div>`;
+        });
+}
+
 function loadDueFees() {
     const html = `
         <div class="due-fees-section">
@@ -2253,6 +3295,7 @@ function loadDueFees() {
                 </div>
             </div>
             <div id="dueFeesSummary" style="margin-bottom: 1.5rem;"></div>
+            <div id="dueFeesAnalyticsContainer" style="margin-bottom:1.5rem;"></div>
             <div id="dueFeesTableContainer"></div>
         </div>
     `;
@@ -2274,7 +3317,37 @@ function loadDueFees() {
         });
     }
 
+    loadDueFeesAnalytics();
     loadDueFeesTable();
+}
+
+function loadDueFeesAnalytics() {
+    const container = document.getElementById('dueFeesAnalyticsContainer');
+    if (!container) return;
+
+    fetch('api/reports.php?action=defaulters')
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load due fee analytics');
+            const data = result.data || {};
+            container.innerHTML = `
+                <div class="activity-analytics-grid">
+                    ${renderAnalyticsBlock('Gender Split', 'Who has unpaid dues', 'dueFeesGenderChart', data.charts?.gender_split || [], 'bar', '#0369a1')}
+                    ${renderAnalyticsBlock('Overdue Bands', 'How late members are', 'dueFeesBandsChart', data.charts?.overdue_bands || [], 'bar', '#b45309')}
+                    ${renderAnalyticsBlock('Top Defaulters', 'Highest due amounts', 'dueFeesTopChart', data.charts?.top_defaulters || [], 'bar', '#dc2626')}
+                    ${renderAnalyticsBlock('Dues Trend', 'Outstanding dues over time', 'dueFeesTrendChart', data.charts?.dues_trend || [], 'line', '#7c3aed')}
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'dueFeesGenderChart', type: 'bar', series: data.charts?.gender_split || [], color: '#0369a1' },
+                { id: 'dueFeesBandsChart', type: 'bar', series: data.charts?.overdue_bands || [], color: '#b45309' },
+                { id: 'dueFeesTopChart', type: 'bar', series: data.charts?.top_defaulters || [], color: '#dc2626' },
+                { id: 'dueFeesTrendChart', type: 'line', series: data.charts?.dues_trend || [], color: '#7c3aed' }
+            ]);
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="error">${err.message}</div>`;
+        });
 }
 
 function loadDueFeesTable(page = 1) {
@@ -2322,8 +3395,9 @@ function loadDueFeesTable(page = 1) {
         .then(data => {
             if (abortController.signal.aborted) return;
             if (data.success) {
+                const normalizedMembers = (data.data || []).map(normalizeMemberStatus);
                 renderDueFeesSummary(data.summary);
-                renderDueFeesTable(data.data, data.pagination);
+                renderDueFeesTable(normalizedMembers, data.pagination);
             } else {
                 document.getElementById('dueFeesTableContainer').innerHTML =
                     '<div class="error">Failed to load due fees</div>';
@@ -2405,11 +3479,13 @@ function renderDueFeesTable(members, pagination) {
                         <td data-label="Phone">${m.phone}</td>
                         <td data-label="Due Amount"><strong style="color: #e74c3c;">${Utils.formatCurrency(m.total_due_amount || 0)}</strong></td>
                         <td data-label="Next Fee Due">${m.next_fee_due_date ? Utils.formatDate(m.next_fee_due_date) : 'N/A'}</td>
-                        <td data-label="Status"><span class="badge ${m.status === 'active' ? 'badge-success' : 'badge-secondary'}">${m.status}</span></td>
+                        <td data-label="Status"><span class="badge ${(m.calculated_status || m.status) === 'active' ? 'badge-success' : 'badge-secondary'}">${m.calculated_status || m.status}</span></td>
                         <td data-label="Actions">
-                            <button class="btn btn-sm btn-primary" onclick="showUpdateDueFeeModal(${m.id}, '${m.gender}', ${m.total_due_amount || 0}, '${m.name}')">
-                                Receive / Update
-                            </button>
+                            ${isAdminUser() ? `
+                                <button class="btn btn-sm btn-primary" onclick="showUpdateDueFeeModal(${m.id}, '${m.gender}', ${m.total_due_amount || 0}, '${m.name}')">
+                                    Receive / Update
+                                </button>
+                            ` : '<span style="color:#6b7280;">Read only</span>'}
                         </td>
                     </tr>
                 `).join('')}
@@ -2433,6 +3509,8 @@ function renderDueFeesTable(members, pagination) {
 }
 
 function showUpdateDueFeeModal(memberId, gender, currentDueAmount, memberName) {
+    if (!requireAdminAccess('update due amounts')) return;
+
     const html = `
         <div class="modal" id="updateDueFeeModal">
             <div class="modal-content">
@@ -2678,12 +3756,13 @@ function loadExpenses() {
                     <select id="expenseCategoryFilter" class="search-input" style="width: auto;">
                         <option value="">All Groups</option>
                     </select>
-                    <button class="btn btn-primary" id="addExpenseBtn">Add Expense</button>
+                    ${isAdminUser() ? '<button class="btn btn-primary" id="addExpenseBtn">Add Expense</button>' : ''}
                 </div>
             </div>
             <div id="expensesSummary" style="margin-bottom: 1.5rem;">
                 <div class="loading">Loading summary...</div>
             </div>
+            <div id="expensesAnalyticsContainer" style="margin-bottom: 1.5rem;"></div>
             <div id="expensesTableContainer">
                 <div class="loading">Loading expenses...</div>
             </div>
@@ -2762,6 +3841,7 @@ function loadExpenses() {
         });
     }
 
+    loadExpensesAnalytics();
     // Load expenses table and categories (non-blocking)
     // Load table first, then summary and categories
     loadExpensesTable();
@@ -2786,6 +3866,33 @@ function loadExpenses() {
             renderExpensesSummary({ total_expenses: 0, categories: [] });
         }
     }, 20000);
+}
+
+function loadExpensesAnalytics() {
+    const container = document.getElementById('expensesAnalyticsContainer');
+    if (!container) return;
+
+    const range = window.analyticsRanges?.expenses || '30d';
+    fetch(`api/reports.php?action=expenses&range=${encodeURIComponent(range)}`)
+        .then(res => res.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.message || 'Failed to load expenses analytics');
+            const data = result.data || {};
+            container.innerHTML = `
+                ${renderRangeSelector('expenses', range)}
+                <div class="activity-analytics-grid">
+                    ${renderAnalyticsBlock('Expense Categories', 'Spending by category', 'expensesPageCategoryChart', data.charts?.categories || [], 'bar', '#b45309')}
+                    ${renderAnalyticsBlock('Monthly Expenses', 'Month-by-month spending', 'expensesPageMonthlyChart', data.charts?.monthly_expenses || [], 'line', '#dc2626')}
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'expensesPageCategoryChart', type: 'bar', series: data.charts?.categories || [], color: '#b45309' },
+                { id: 'expensesPageMonthlyChart', type: 'line', series: data.charts?.monthly_expenses || [], color: '#dc2626' }
+            ]);
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="error">${err.message}</div>`;
+        });
 }
 
 function loadExpenseCategories() {
@@ -3134,8 +4241,10 @@ function renderExpensesTable(expenses, pagination) {
                         <td data-label="Description">${e.description || '-'}</td>
                         <td data-label="Amount"><strong style="color: #e74c3c;">${Utils.formatCurrency(e.amount || 0)}</strong></td>
                         <td data-label="Actions">
-                            <button class="btn btn-sm btn-primary" onclick="showEditExpenseForm(${e.id})">Edit</button>
-                            <button class="btn btn-sm btn-danger" onclick="deleteExpense(${e.id})">Delete</button>
+                            ${isAdminUser() ? `
+                                <button class="btn btn-sm btn-primary" onclick="showEditExpenseForm(${e.id})">Edit</button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteExpense(${e.id})">Delete</button>
+                            ` : '<span style="color:#6b7280;">Read only</span>'}
                         </td>
                     </tr>
                 `).join('')}
@@ -3159,10 +4268,13 @@ function renderExpensesTable(expenses, pagination) {
 }
 
 function showAddExpenseForm() {
+    if (!requireAdminAccess('add expenses')) return;
     showExpenseForm();
 }
 
 function showEditExpenseForm(expenseId) {
+    if (!requireAdminAccess('edit expenses')) return;
+
     fetch(`api/expenses.php?action=get&id=${expenseId}`)
         .then(async res => {
             if (!res.ok) throw new Error('Failed to load expense');
@@ -3338,6 +4450,7 @@ function saveExpense() {
 }
 
 function deleteExpense(expenseId) {
+    if (!requireAdminAccess('delete expenses')) return;
     if (!confirm('Are you sure you want to delete this expense? This action cannot be undone.')) return;
 
     fetch(`api/expenses.php?action=delete&id=${expenseId}`, { method: 'POST' })
@@ -3377,21 +4490,29 @@ function loadReports() {
             })}
             <h2>Reports</h2>
             <div class="reports-grid">
-                <div class="report-card" onclick="generateReport('members')">
+                <div class="report-card" data-report="members" onclick="generateReport('members', this)">
                     <h3>📊 Members Overview</h3>
                     <p>See total, active, and overdue members</p>
                 </div>
-                <div class="report-card" onclick="generateReport('attendance')">
+                <div class="report-card" data-report="attendance" onclick="generateReport('attendance', this)">
                     <h3>✓ Attendance Overview</h3>
                     <p>See who came today and this month</p>
                 </div>
-                <div class="report-card" onclick="generateReport('payments')">
+                <div class="report-card" data-report="payments" onclick="generateReport('payments', this)">
                     <h3>💰 Payment Overview</h3>
                     <p>See revenue and payment totals</p>
                 </div>
-                <div class="report-card" onclick="generateReport('defaulters')">
+                <div class="report-card" data-report="defaulters" onclick="generateReport('defaulters', this)">
                     <h3>⚠️ Unpaid Members</h3>
                     <p>See members with overdue or unpaid fees</p>
+                </div>
+                <div class="report-card" data-report="expenses" onclick="generateReport('expenses', this)">
+                    <h3>💸 Expense Overview</h3>
+                    <p>See category and monthly expense analytics</p>
+                </div>
+                <div class="report-card" data-report="profit" onclick="generateReport('profit', this)">
+                    <h3>📉 Profit Comparison</h3>
+                    <p>Compare revenue, expenses, and profit trend</p>
                 </div>
             </div>
             <div id="reportResults" style="margin-top: 2rem;"></div>
@@ -3400,11 +4521,16 @@ function loadReports() {
     document.getElementById('contentBody').innerHTML = html;
 }
 
-function generateReport(type) {
+function generateReport(type, cardEl = null) {
     const resultsDiv = document.getElementById('reportResults');
     resultsDiv.innerHTML = '<div class="loading">Generating report...</div>';
 
-    fetch(`api/reports.php?action=${type}`)
+    document.querySelectorAll('.report-card').forEach(card => card.classList.remove('active-report'));
+    if (cardEl) cardEl.classList.add('active-report');
+    else document.querySelector(`.report-card[data-report="${type}"]`)?.classList.add('active-report');
+
+    const range = window.analyticsRanges?.reports || '30d';
+    fetch(`api/reports.php?action=${type}&range=${encodeURIComponent(range)}`)
         .then(res => res.json())
         .then(data => {
             if (data.success) {
@@ -3440,8 +4566,18 @@ function renderReport(data, type) {
                         <div class="stat-item"><strong>Total Active:</strong> ${(data.men?.active || 0) + (data.women?.active || 0)}</div>
                         <div class="stat-item"><strong>Outstanding Active Due:</strong> ${Utils.formatCurrency(data.operations?.active_due_amount || 0)}</div>
                     </div>
+                    <div class="activity-analytics-grid" style="margin-top:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Monthly Member Growth</h3><small>Growth trend</small></div><canvas id="membersGrowthChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Gender Split</h3><small>Men vs women</small></div><canvas id="membersGenderChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Active / Inactive Split</h3><small>Status overview</small></div><canvas id="membersStatusChart" width="520" height="220"></canvas></div>
+                    </div>
                 </div>
             `;
+            renderReportCharts([
+                { id: 'membersGrowthChart', type: 'line', series: data.charts?.monthly_growth || [], color: '#166534' },
+                { id: 'membersGenderChart', type: 'bar', series: data.charts?.gender_split || [], color: '#0369a1' },
+                { id: 'membersStatusChart', type: 'bar', series: data.charts?.active_split || [], color: '#b45309' }
+            ]);
             break;
         case 'defaulters':
             const defaulters = data.defaulters || [];
@@ -3453,6 +4589,12 @@ function renderReport(data, type) {
                         <div class="stat-item"><strong>Overdue Members:</strong> ${data.overdue_count || 0}</div>
                         <div class="stat-item"><strong>Members With Outstanding Dues:</strong> ${data.outstanding_dues_count || 0}</div>
                         <div class="stat-item"><strong>Total Outstanding:</strong> ${Utils.formatCurrency(data.total_outstanding_amount || 0)}</div>
+                    </div>
+                    <div class="activity-analytics-grid" style="margin-bottom:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Gender Split</h3><small>Men vs women with dues</small></div><canvas id="defaultersGenderChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Overdue Bands</h3><small>By overdue days</small></div><canvas id="defaultersBandsChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Top Defaulters</h3><small>Highest due amounts</small></div><canvas id="defaultersTopChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Dues Trend</h3><small>Outstanding dues over time</small></div><canvas id="defaultersTrendChart" width="520" height="220"></canvas></div>
                     </div>
                     ${defaulters.length > 0 ? `
                         <table class="data-table">
@@ -3481,7 +4623,7 @@ function renderReport(data, type) {
                                             <td><span style="color: ${d.days_overdue > 0 ? 'red' : '#f39c12'}; font-weight: bold;">${d.days_overdue || 0} days</span></td>
                                             <td><strong style="color: #e74c3c;">${Utils.formatCurrency(d.total_due_amount || 0)}</strong></td>
                                             <td>
-                                                <button class="btn btn-sm btn-primary" onclick="currentGender='${d.gender}'; updateFee(${d.id}, '${d.member_code}')">Take Fee</button>
+                                                ${isAdminUser() ? `<button class="btn btn-sm btn-primary" onclick="currentGender='${d.gender}'; updateFee(${d.id}, '${d.member_code}')">Take Fee</button>` : '<span style="color:#6b7280;">Read only</span>'}
                                             </td>
                                         </tr>
                                     `).join('')}
@@ -3490,11 +4632,20 @@ function renderReport(data, type) {
                     ` : '<div class="empty-state"><strong>No unpaid members found</strong>All members are up to date.</div>'}
                 </div>
             `;
+            renderReportCharts([
+                { id: 'defaultersGenderChart', type: 'bar', series: data.charts?.gender_split || [], color: '#0369a1' },
+                { id: 'defaultersBandsChart', type: 'bar', series: data.charts?.overdue_bands || [], color: '#b45309' },
+                { id: 'defaultersTopChart', type: 'bar', series: data.charts?.top_defaulters || [], color: '#dc2626' },
+                { id: 'defaultersTrendChart', type: 'line', series: data.charts?.dues_trend || [], color: '#7c3aed' }
+            ]);
             break;
         case 'payments':
             resultsDiv.innerHTML = `
                 <div class="report-content">
-                    <h3>Payment Overview</h3>
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>Payment Overview</h3>
+                        ${renderRangeSelector('reports', window.analyticsRanges?.reports || '30d')}
+                    </div>
                     <div class="stats-grid">
                         <div class="stat-item"><strong>Total Payments:</strong> ${data.total_payments || 0}</div>
                         <div class="stat-item"><strong>Total Revenue:</strong> ${Utils.formatCurrency(data.total_revenue || 0)}</div>
@@ -3505,13 +4656,26 @@ function renderReport(data, type) {
                         <div class="stat-item"><strong>Revenue This Month:</strong> ${Utils.formatCurrency(data.revenue_this_month || 0)}</div>
                         <div class="stat-item"><strong>Pending Remaining Amount:</strong> ${Utils.formatCurrency(data.pending_remaining_amount || 0)}</div>
                     </div>
+                    <div class="activity-analytics-grid" style="margin-top:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Daily Revenue</h3><small>Last 30 days</small></div><canvas id="paymentsDailyChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Monthly Revenue</h3><small>Month-by-month</small></div><canvas id="paymentsMonthlyChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Payment Methods</h3><small>Method usage</small></div><canvas id="paymentsMethodChart" width="520" height="220"></canvas></div>
+                    </div>
                 </div>
             `;
+            renderReportCharts([
+                { id: 'paymentsDailyChart', type: 'line', series: data.charts?.daily_revenue || [], color: '#166534' },
+                { id: 'paymentsMonthlyChart', type: 'line', series: data.charts?.monthly_revenue || [], color: '#0369a1' },
+                { id: 'paymentsMethodChart', type: 'bar', series: data.charts?.payment_methods || [], color: '#7c3aed' }
+            ]);
             break;
         case 'attendance':
             resultsDiv.innerHTML = `
                 <div class="report-content">
-                    <h3>Attendance Statistics</h3>
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>Attendance Statistics</h3>
+                        ${renderRangeSelector('reports', window.analyticsRanges?.reports || '30d')}
+                    </div>
                     <div class="stats-grid">
                         <div class="stat-item"><strong>Today's Attendance:</strong> ${data.today || 0}</div>
                         <div class="stat-item"><strong>Today's Unique Members:</strong> ${data.today_unique_members || 0}</div>
@@ -3519,8 +4683,78 @@ function renderReport(data, type) {
                         <div class="stat-item"><strong>This Month's Attendance:</strong> ${data.this_month || 0}</div>
                         <div class="stat-item"><strong>Unique Members This Month:</strong> ${data.unique_members_this_month || 0}</div>
                     </div>
+                    <div class="activity-analytics-grid" style="margin-top:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Daily Attendance</h3><small>Last 30 days</small></div><canvas id="attendanceDailyChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Gender Attendance</h3><small>Men vs women</small></div><canvas id="attendanceGenderChart" width="520" height="220"></canvas></div>
+                    </div>
                 </div>
             `;
+            renderReportCharts([
+                { id: 'attendanceDailyChart', type: 'line', series: data.charts?.daily_attendance || [], color: '#166534' },
+                { id: 'attendanceGenderChart', type: 'bar', series: data.charts?.gender_attendance || [], color: '#0369a1' }
+            ]);
+            break;
+        case 'expenses':
+            resultsDiv.innerHTML = `
+                <div class="report-content">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>Expense Overview</h3>
+                        ${renderRangeSelector('reports', window.analyticsRanges?.reports || '30d')}
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item"><strong>Total Expense Entries:</strong> ${data.total_expenses || 0}</div>
+                        <div class="stat-item"><strong>Total Expense Amount:</strong> ${Utils.formatCurrency(data.total_amount || 0)}</div>
+                        <div class="stat-item"><strong>Average Expense:</strong> ${Utils.formatCurrency(data.avg_amount || 0)}</div>
+                    </div>
+                    <div class="activity-analytics-grid" style="margin-top:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Expense Categories</h3><small>Where money goes</small></div><canvas id="expensesCategoryChart" width="520" height="220"></canvas></div>
+                        <div class="chart-card"><div class="chart-card-header"><h3>Monthly Expenses</h3><small>Month-by-month</small></div><canvas id="expensesMonthlyChart" width="520" height="220"></canvas></div>
+                    </div>
+                </div>
+            `;
+            renderReportCharts([
+                { id: 'expensesCategoryChart', type: 'bar', series: data.charts?.categories || [], color: '#b45309' },
+                { id: 'expensesMonthlyChart', type: 'line', series: data.charts?.monthly_expenses || [], color: '#dc2626' }
+            ]);
+            break;
+        case 'profit':
+            resultsDiv.innerHTML = `
+                <div class="report-content">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                        <h3>Profit Comparison</h3>
+                        ${renderRangeSelector('reports', window.analyticsRanges?.reports || '30d')}
+                    </div>
+                    <div class="activity-analytics-grid" style="margin-top:1rem;">
+                        <div class="chart-card"><div class="chart-card-header"><h3>Revenue / Expenses / Profit</h3><small>Combined multi-line comparison</small></div>${renderChartLegend([{ label: 'Revenue', color: '#166534' }, { label: 'Expenses', color: '#dc2626' }, { label: 'Profit', color: '#0369a1' }], 'profitTrendChart')}<canvas id="profitTrendChart" width="520" height="220"></canvas></div>
+                    </div>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead><tr><th>Period</th><th>Revenue</th><th>Expenses</th><th>Profit</th></tr></thead>
+                            <tbody>
+                                ${(data.trend || []).map(item => `
+                                    <tr>
+                                        <td>${item.label}</td>
+                                        <td>${Utils.formatCurrency(item.revenue || 0)}</td>
+                                        <td>${Utils.formatCurrency(item.expenses || 0)}</td>
+                                        <td>${Utils.formatCurrency(item.profit || 0)}</td>
+                                    </tr>
+                                `).join('') || '<tr><td colspan="4">No profit data available</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            renderReportCharts([
+                {
+                    id: 'profitTrendChart',
+                    type: 'multi-line',
+                    datasets: [
+                        { label: 'Revenue', color: '#166534', series: (data.trend || []).map(item => ({ label: item.label, total: item.revenue })) },
+                        { label: 'Expenses', color: '#dc2626', series: (data.trend || []).map(item => ({ label: item.label, total: item.expenses })) },
+                        { label: 'Profit', color: '#0369a1', series: (data.trend || []).map(item => ({ label: item.label, total: item.profit })) }
+                    ]
+                }
+            ]);
             break;
         default:
             resultsDiv.innerHTML = `
@@ -4139,13 +5373,12 @@ function handleLogout() {
 
     stopSectionAutoRefresh();
     fetch('api/auth.php?action=logout', {
-        method: 'POST'
+        method: 'POST',
+        keepalive: true
     })
-        .then(() => {
-            window.location.href = 'index.html';
-        })
-        .catch(() => {
-            window.location.href = 'index.html';
+        .catch(() => null)
+        .finally(() => {
+            window.location.replace('index.html');
         });
 }
 

@@ -28,7 +28,7 @@ function handleAdminLogin() {
 
     // Validate inputs
     if (!username || !password) {
-        Utils.showNotification('Please enter username and password', 'error');
+        Utils.showNotification('Please enter your username and password.', 'error');
         return;
     }
 
@@ -37,8 +37,8 @@ function handleAdminLogin() {
         return;
     }
 
-    if (password.length < 6) {
-        Utils.showNotification('Password must be at least 6 characters', 'error');
+    if (password.length < 3) {
+        Utils.showNotification('Password must be at least 3 characters', 'error');
         return;
     }
 
@@ -58,9 +58,13 @@ function handleAdminLogin() {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                Utils.showNotification('Login successful', 'success');
+                Utils.showNotification('Login successful. Opening dashboard...', 'success');
                 setTimeout(() => {
-                    window.location.href = 'admin-dashboard.html';
+                    if (data.role === 'admin' || data.role === 'staff') {
+                        window.location.href = 'admin-dashboard.html';
+                    } else {
+                        window.location.href = 'index.html';
+                    }
                 }, 500);
             } else {
                 Utils.showNotification(data.message || 'Login failed', 'error');
@@ -83,7 +87,7 @@ function handleMemberLogin() {
 
     // Validate input
     if (!memberCode) {
-        Utils.showNotification('Please enter member code', 'error');
+        Utils.showNotification('Please enter member code or account number.', 'error');
         return;
     }
 
@@ -107,7 +111,7 @@ function handleMemberLogin() {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                Utils.showNotification('Login successful', 'success');
+                Utils.showNotification('Login successful. Opening profile...', 'success');
                 setTimeout(() => {
                     if (data.gender === 'men') {
                         window.location.href = 'member-profile-men.html';

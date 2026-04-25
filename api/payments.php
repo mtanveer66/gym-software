@@ -9,15 +9,13 @@ require_once __DIR__ . '/../app/models/Payment.php';
 require_once __DIR__ . '/../app/models/MessageTemplate.php';
 require_once __DIR__ . '/../app/models/MessageQueue.php';
 require_once __DIR__ . '/../app/models/MemberConsent.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
+require_once __DIR__ . '/../app/models/Member.php';
 
 header('Content-Type: application/json');
 
-// Check authentication
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
@@ -27,6 +25,8 @@ $gender = in_array($gender, ['men', 'women'], true) ? $gender : 'men';
 try {
     $database = new Database();
     $db = $database->getConnection();
+    $adminLogger = new AdminLogger($db);
+    $memberModel = new Member($db, $gender);
 
     switch ($action) {
         case 'list':
@@ -38,6 +38,8 @@ try {
             $defaulters = filter_var($_GET['defaulters'] ?? false, FILTER_VALIDATE_BOOLEAN);  // Show defaulters
             $status = $_GET['status'] ?? null; // 'active', 'inactive', or null for default behavior
             $status = in_array($status, ['active', 'inactive'], true) ? $status : null;
+
+            $memberModel->syncAllActivityStatuses();
 
             // Get payments for current month
             $memberTable = 'members_' . $gender;
@@ -184,6 +186,7 @@ try {
             break;
 
         case 'create':
+            AuthHelper::ensureAdminAction('Only admin can create payments');
             if ($method === 'POST') {
                 $data = json_decode(file_get_contents('php://input'), true);
                 if (!is_array($data)) {
@@ -272,6 +275,13 @@ try {
                         ]);
                     }
 
+                    $adminLogger->log('payment_recorded', 'payment_' . $gender, $id, null, [
+                        'member_id' => $memberId,
+                        'member_name' => $memberRow['name'] ?? null,
+                        'amount' => $amount,
+                        'payment_date' => $paymentDate,
+                        'payment_method' => $paymentData['payment_method']
+                    ]);
                     echo json_encode(['success' => true, 'id' => $id, 'message' => 'Payment recorded successfully']);
                 } else {
                     http_response_code(500);

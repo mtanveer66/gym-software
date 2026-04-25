@@ -15,6 +15,8 @@
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/helpers/Cache.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
 
 header('Content-Type: application/json');
 
@@ -32,11 +34,12 @@ if (env_bool('MAINTENANCE_MODE', false)) {
 $method = $_SERVER['REQUEST_METHOD'];
 $type = $_GET['type'] ?? '';
 $rfidUid = trim($_GET['rfid_uid'] ?? '');
-$gateId = trim($_GET['gate_id'] ?? '');
+$gateId = trim($_GET['gate_id'] ?? ($_GET['gate'] ?? ''));
 
 try {
     $database = new Database();
     $db = $database->getConnection();
+    $adminLogger = new AdminLogger($db);
     
     // ========================================================================
     // PRODUCTION RATE LIMITING
@@ -669,9 +672,24 @@ try {
         // ADMIN FORCE OPEN
         // ====================================================================
         case 'force_open':
-            // TODO: Add admin authentication check
-            // TODO: Log admin action with reason
-            
+            AuthHelper::requireAdmin();
+
+            $resolvedGateId = $gateId !== '' ? $gateId : 'manual_override';
+            $adminLogger->log('gate_force_open', 'gate', null, null, [
+                'gate_id' => $resolvedGateId,
+                'source' => 'dashboard_override'
+            ]);
+            $resolvedGateType = stripos($resolvedGateId, 'exit') !== false ? 'exit' : 'entry';
+            logGateActivity($db, [
+                'gate_type' => $resolvedGateType,
+                'gate_id' => $resolvedGateId,
+                'rfid_uid' => 'ADMIN_OVERRIDE',
+                'action' => 'force_open',
+                'status' => 'success',
+                'reason' => 'Admin override by ' . ($_SESSION['username'] ?? 'admin'),
+                'is_fee_defaulter' => 0
+            ]);
+
             echo json_encode([
                 'success' => true,
                 'action' => 'open',

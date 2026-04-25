@@ -8,6 +8,7 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
 require_once __DIR__ . '/../app/models/Attendance.php';
 require_once __DIR__ . '/../app/models/Expense.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 // Release session lock immediately to prevent blocking parallel requests
 if (session_status() === PHP_SESSION_ACTIVE) {
@@ -16,12 +17,7 @@ if (session_status() === PHP_SESSION_ACTIVE) {
 
 header('Content-Type: application/json');
 
-// Check authentication (allow GET requests by default)
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 // AUTO-RUN DAILY JOBS
 require_once __DIR__ . '/CronHelper.php';
@@ -194,6 +190,77 @@ try {
     $todayUniqueMembers = ($attendanceTodayMen['unique_members'] ?? 0) + ($attendanceTodayWomen['unique_members'] ?? 0);
     $activeSessions = ($attendanceTodayMen['active_sessions'] ?? 0) + ($attendanceTodayWomen['active_sessions'] ?? 0);
 
+    try {
+        $memberGrowthQuery = "SELECT label, SUM(total) AS total FROM (
+            SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COUNT(*) AS total FROM members_men GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            UNION ALL
+            SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COUNT(*) AS total FROM members_women GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+        ) mg GROUP BY label ORDER BY label ASC";
+        $memberGrowthStmt = $db->prepare($memberGrowthQuery);
+        $memberGrowthStmt->execute();
+        $memberGrowth = array_map(static function ($row) {
+            return ['label' => $row['label'], 'total' => (int)($row['total'] ?? 0)];
+        }, $memberGrowthStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    } catch (Throwable $e) {
+        $memberGrowth = [];
+    }
+
+    try {
+        $revenueTrendQuery = "SELECT payment_date AS label, SUM(amount) AS total FROM (
+            SELECT payment_date, amount FROM payments_men WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            UNION ALL
+            SELECT payment_date, amount FROM payments_women WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        ) rt GROUP BY payment_date ORDER BY payment_date ASC";
+        $revenueTrendStmt = $db->prepare($revenueTrendQuery);
+        $revenueTrendStmt->execute();
+        $revenueTrend = array_map(static function ($row) {
+            return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+        }, $revenueTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    } catch (Throwable $e) {
+        $revenueTrend = [];
+    }
+
+    try {
+        $attendanceTrendQuery = "SELECT label, SUM(total) AS total FROM (
+            SELECT DATE(check_in) AS label, COUNT(*) AS total FROM attendance_men WHERE DATE(check_in) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY DATE(check_in)
+            UNION ALL
+            SELECT DATE(check_in) AS label, COUNT(*) AS total FROM attendance_women WHERE DATE(check_in) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY DATE(check_in)
+        ) atd GROUP BY label ORDER BY label ASC";
+        $attendanceTrendStmt = $db->prepare($attendanceTrendQuery);
+        $attendanceTrendStmt->execute();
+        $attendanceTrend = array_map(static function ($row) {
+            return ['label' => $row['label'], 'total' => (int)($row['total'] ?? 0)];
+        }, $attendanceTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    } catch (Throwable $e) {
+        $attendanceTrend = [];
+    }
+
+    try {
+        $expenseTrendQuery = "SELECT expense_date AS label, SUM(amount) AS total FROM expenses WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY expense_date ORDER BY expense_date ASC";
+        $expenseTrendStmt = $db->prepare($expenseTrendQuery);
+        $expenseTrendStmt->execute();
+        $expenseTrend = array_map(static function ($row) {
+            return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+        }, $expenseTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    } catch (Throwable $e) {
+        $expenseTrend = [];
+    }
+
+    try {
+        $duesTrendQuery = "SELECT label, SUM(total_due_amount) AS total FROM (
+            SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COALESCE(SUM(total_due_amount), 0) AS total_due_amount FROM members_men GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+            UNION ALL
+            SELECT DATE_FORMAT(created_at, '%Y-%m') AS label, COALESCE(SUM(total_due_amount), 0) AS total_due_amount FROM members_women GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+        ) dt GROUP BY label ORDER BY label ASC";
+        $duesTrendStmt = $db->prepare($duesTrendQuery);
+        $duesTrendStmt->execute();
+        $duesTrend = array_map(static function ($row) {
+            return ['label' => $row['label'], 'total' => (float)($row['total'] ?? 0)];
+        }, $duesTrendStmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+    } catch (Throwable $e) {
+        $duesTrend = [];
+    }
+
     echo json_encode([
         'success' => true,
         'data' => [
@@ -237,7 +304,12 @@ try {
                     'expenses' => $totalExpenses,
                     'net_profit' => $netProfit
                 ]
-            ]
+            ],
+            'member_growth' => $memberGrowth,
+            'revenue_trend' => $revenueTrend,
+            'attendance_trend' => $attendanceTrend,
+            'expense_trend' => $expenseTrend,
+            'dues_trend' => $duesTrend
         ]
     ]);
 } catch (Exception $e) {

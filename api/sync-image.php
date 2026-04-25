@@ -19,7 +19,7 @@ if ($expectedApiKey === '') {
     exit;
 }
 
-if ($apiKey !== $expectedApiKey) {
+if (!hash_equals($expectedApiKey, (string)$apiKey)) {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unauthorized - Invalid API key']);
     exit;

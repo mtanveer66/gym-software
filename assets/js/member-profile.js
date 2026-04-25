@@ -37,12 +37,12 @@ function handleLookup() {
     const memberCode = document.getElementById('memberCodeInput').value.trim();
 
     if (!memberCode) {
-        Utils.showNotification('Please enter member code', 'error');
+        Utils.showNotification('Please enter member code.', 'error');
         return;
     }
 
-    // Use member-profile.php which doesn't require authentication and searches both genders
-    // This is the same endpoint used to load the profile, so we get member data and check in
+    // Use member-profile.php which checks both genders by exact member code.
+    // This is the same endpoint used to load the profile, so we get member data and check in.
     fetch(`api/member-profile.php?code=${encodeURIComponent(memberCode)}`)
         .then(async res => {
             const text = await res.text();
@@ -101,34 +101,34 @@ function handleLookup() {
                 .then(result => {
                     console.log('Check-in response:', result);
                     if (result.success) {
-                        Utils.showNotification('Check-in recorded successfully', 'success');
+                        Utils.showNotification('Member checked in successfully.', 'success');
                         // Now load the profile after successful check-in
                         loadMemberProfile(memberCode);
                     } else {
                         console.warn('Check-in failed:', result.message);
                         // Even if check-in fails (e.g., already checked in), still load the profile
-                        Utils.showNotification(result.message || 'Note: Check-in status unknown', 'info');
+                        Utils.showNotification(result.message || 'Profile opened, but check-in status is unclear.', 'info');
                         loadMemberProfile(memberCode);
                     }
                 })
                 .catch(error => {
                     console.error('Check-in error:', error);
                     // Even if check-in fails, still load the profile
-                    Utils.showNotification('Error: ' + error.message + '. Loading profile...', 'error');
+                    Utils.showNotification('Check-in had an issue. Opening profile anyway.', 'error');
                     loadMemberProfile(memberCode);
                 });
         })
         .catch(error => {
             console.error('Member lookup error:', error);
-            Utils.showNotification('Failed to lookup member: ' + error.message, 'error');
+            Utils.showNotification('Could not find the member: ' + error.message, 'error');
         });
 }
 
 function loadMemberProfile(searchTerm) {
     const contentDiv = document.getElementById('memberContent');
-    contentDiv.innerHTML = '<div class="loading">Loading member profile...</div>';
+    contentDiv.innerHTML = '<div class="loading">Opening member profile...</div>';
 
-    // Load profile directly - search by code, email, phone, or name
+    // Load profile directly by exact member code
     fetch(`api/member-profile.php?code=${encodeURIComponent(searchTerm)}`)
         .then(async res => {
             const text = await res.text();
@@ -150,13 +150,13 @@ function loadMemberProfile(searchTerm) {
                 // Synchronous load complete.
             } else {
                 contentDiv.innerHTML = `<div class="error">${data?.message || 'Member not found'}</div>`;
-                Utils.showNotification(data?.message || 'Member not found', 'error');
+                Utils.showNotification(data?.message || 'Member not found.', 'error');
             }
         })
         .catch(err => {
             console.error('Profile error:', err);
-            contentDiv.innerHTML = `<div class="error">Error loading member profile: ${err.message}</div>`;
-            Utils.showNotification('Error loading member profile', 'error');
+            contentDiv.innerHTML = `<div class="error">Could not open member profile: ${err.message}</div>`;
+            Utils.showNotification('Could not open member profile.', 'error');
         });
 }
 
@@ -222,6 +222,17 @@ let allMemberPayments = [];
 let currentPaymentPage = 1;
 const PAYMENTS_PER_PAGE = 14;
 
+function logoutMemberProfile() {
+    fetch('api/auth.php?action=logout', {
+        method: 'POST',
+        keepalive: true
+    })
+        .catch(() => null)
+        .finally(() => {
+            window.location.replace('index.html');
+        });
+}
+
 function renderMemberProfile(data) {
     const member = data.profile || data.data;
     const gender = data.gender || window.MEMBER_GENDER;
@@ -261,7 +272,10 @@ function renderMemberProfile(data) {
         }
                         </div>
                         <div class="profile-details">
-                            <h1>${member.name}</h1>
+                            <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+                                <h1 style="margin:0;">${member.name}</h1>
+                                <button class="btn" onclick="logoutMemberProfile()" style="background:#dc2626;">Logout</button>
+                            </div>
                             <div class="detail-item">
                                 <span class="detail-label">Member Code:</span>
                                 <span class="detail-value">${member.member_code}</span>
@@ -307,7 +321,7 @@ function renderMemberProfile(data) {
                             `}
                             ${defaultDate ? `
                             <div class="detail-item">
-                                <span class="detail-label">Default Date:</span>
+                                <span class="detail-label">Special Due Date:</span>
                                 <span class="detail-value" style="color: #8b5cf6; font-weight: bold;">${Utils.formatDate(defaultDate)}</span>
                             </div>
                             ` : ''}
@@ -319,13 +333,13 @@ function renderMemberProfile(data) {
                             ` : ''}
                             ${isDefaulter ? `
                             <div class="detail-item" style="background: rgba(220, 53, 69, 0.2); padding: 0.75rem; border-radius: 5px; margin-top: 1rem; border: 1px solid #dc3545;">
-                                <span class="detail-label" style="color: #dc3545; font-weight: bold;">⚠️ Defaulter Status</span>
-                                <span class="detail-value" style="color: #dc3545; font-weight: bold;">Not paid for 30+ days</span>
+                                <span class="detail-label" style="color: #dc3545; font-weight: bold;">⚠️ Payment Status</span>
+                                <span class="detail-value" style="color: #dc3545; font-weight: bold;">Unpaid for 30+ days</span>
                             </div>
                             ` : ''}
                             ${member.total_due_amount > 0 ? `
                             <div class="detail-item" style="background: rgba(255, 0, 0, 0.1); padding: 0.75rem; border-radius: 5px; margin-top: 1rem;">
-                                <span class="detail-label" style="color: red; font-weight: bold;">Total Due Amount:</span>
+                                <span class="detail-label" style="color: red; font-weight: bold;">Total Unpaid Amount:</span>
                                 <span class="detail-value" style="color: red; font-weight: bold; font-size: 1.25rem;">${Utils.formatCurrency(member.total_due_amount)}</span>
                             </div>
                             ` : ''}
@@ -333,10 +347,10 @@ function renderMemberProfile(data) {
                     </div>
                 </div>
 
-                <!-- Right Side: Fee History -->
+                <!-- Right Side: Payment History -->
                 <div class="profile-main-content">
                     <div class="fee-section" style="margin-top: 0;">
-                        <h2 style="margin-top: 0;">Fee History</h2>
+                        <h2 style="margin-top: 0;">Payment History</h2>
                         <div class="fee-history" id="feeHistoryContainer">
                             ${renderFeeHistory(allMemberPayments)}
                         </div>
@@ -344,10 +358,10 @@ function renderMemberProfile(data) {
                 </div>
             </div>
             
-            <!-- Bottom: Attendance Calendar (Centered, Smaller) -->
+            <!-- Bottom: Attendance This Month -->
             <div class="calendar-wrapper" style="margin-top: 2rem; padding: 0 2rem; display: flex; justify-content: center;">
                 <div class="calendar-section" style="width: 100%; max-width: 600px;">
-                    <h2>Attendance Calendar</h2>
+                    <h2>Attendance This Month</h2>
                     <div class="attendance-calendar" id="attendanceCalendar">
                         ${renderAttendanceCalendar(year, month, attendanceCalendar, defaultDate)}
                     </div>
@@ -355,10 +369,10 @@ function renderMemberProfile(data) {
                         <div>
                             <p style="margin: 0 0 0.5rem 0; color: #8b5cf6; font-weight: bold;">Attendance</p>
                             <p style="margin: 0; color: var(--text-secondary);">
-                                Attendance is marked automatically on lookup.
+                                Attendance is usually marked automatically when you open this profile.
                             </p>
                         </div>
-                        <button onclick="checkInAttendance()" style="padding: 0.75rem 2rem; background: #4f46e5; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: all 0.3s; white-space: nowrap;">Mark Attendance</button>
+                        <button onclick="checkInAttendance()" style="padding: 0.75rem 2rem; background: #4f46e5; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: all 0.3s; white-space: nowrap;">Mark Check-In</button>
                     </div>
                 </div>
             </div>
@@ -466,7 +480,7 @@ function renderAttendanceCalendar(year, month, attendanceData, defaultDate = nul
 // Function to check in attendance manually (from the button on profile page)
 function checkInAttendance() {
     if (!currentMemberData) {
-        Utils.showNotification('Member data not loaded', 'error');
+        Utils.showNotification('Member data is not loaded yet.', 'error');
         return;
     }
 
@@ -498,7 +512,7 @@ function checkInAttendance() {
         })
         .then(data => {
             if (data.success) {
-                Utils.showNotification('Check-in recorded successfully', 'success');
+                Utils.showNotification('Member checked in successfully.', 'success');
 
                 // Reload profile to update calendar
                 setTimeout(() => {
@@ -536,7 +550,7 @@ function playBeepSound() {
 
 function renderFeeHistory(payments) {
     if (!payments || payments.length === 0) {
-        return '<div class="no-data"><p>No payment history available</p></div>';
+        return '<div class="no-data"><p>No payment history found yet.</p></div>';
     }
 
     // Sort payments by date (newest first)

@@ -82,16 +82,22 @@ class MessageQueue {
 
     public function getStats() {
         $query = "SELECT
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                    SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent_count,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+                    COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,
+                    COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent_count,
+                    COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count
                   FROM {$this->table}";
         $stmt = $this->conn->prepare($query);
         $stmt->execute();
-        return $stmt->fetch(PDO::FETCH_ASSOC) ?: [
+        $stats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [
             'pending_count' => 0,
             'sent_count' => 0,
             'failed_count' => 0,
+        ];
+
+        return [
+            'pending_count' => (int)($stats['pending_count'] ?? 0),
+            'sent_count' => (int)($stats['sent_count'] ?? 0),
+            'failed_count' => (int)($stats['failed_count'] ?? 0),
         ];
     }
 }

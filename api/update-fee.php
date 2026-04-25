@@ -11,18 +11,15 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/models/Member.php';
 require_once __DIR__ . '/../app/models/Payment.php';
 require_once __DIR__ . '/../app/helpers/SyncHelper.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
+require_once __DIR__ . '/../app/helpers/AdminLogger.php';
 
 // Clear any output that might have been generated
 ob_clean();
 
 header('Content-Type: application/json');
 
-// Check authentication
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdmin();
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -85,6 +82,7 @@ try {
     $database = new Database();
     $db = $database->getConnection();
     $member = new Member($db, $gender);
+    $adminLogger = new AdminLogger($db);
     
     // Get member details
     $memberData = $member->getById($memberId);
@@ -217,6 +215,19 @@ try {
 
         SyncHelper::markRecordForSync($db, "members_{$gender}", (int)$memberId);
         SyncHelper::markRecordForSync($db, "payments_{$gender}", (int)$paymentId);
+
+        $adminLogger->log('member_fee_updated', 'member_' . $gender, $memberId, null, [
+            'payment_id' => $paymentId,
+            'previous_due' => $currentDueAmount,
+            'monthly_fee' => $monthlyFee,
+            'total_owed' => $totalOwed,
+            'payment_amount' => $actualPaymentAmount,
+            'remaining_amount' => $newTotalDue,
+            'next_fee_due_date' => $nextFeeDueDate,
+            'member_status' => $memberStatus,
+            'is_partial_payment' => $isPartialPayment,
+            'is_defaulter_update' => $isDefaulterUpdate,
+        ]);
 
         $message = '';
         if ($isPartialPayment) {

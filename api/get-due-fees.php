@@ -7,16 +7,14 @@ ob_start();
 
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../app/models/Member.php';
+require_once __DIR__ . '/../app/helpers/AuthHelper.php';
 
 ob_clean();
 
 header('Content-Type: application/json');
 
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
+AuthHelper::requireAdminOrStaff();
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
     http_response_code(405);
@@ -34,6 +32,14 @@ try {
 
     $database = new Database();
     $db = $database->getConnection();
+
+    foreach (['men', 'women'] as $syncGender) {
+        try {
+            (new Member($db, $syncGender))->syncAllActivityStatuses();
+        } catch (Throwable $e) {
+            error_log('Due fees status sync failed for ' . $syncGender . ': ' . $e->getMessage());
+        }
+    }
 
     $tables = [];
     if ($gender === 'all' || $gender === 'men') {

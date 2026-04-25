@@ -99,7 +99,7 @@ try {
                         
                         echo json_encode([
                             'success' => true,
-                            'role' => 'admin',
+                            'role' => $result['role'],
                             'message' => 'Login successful'
                         ]);
                     } else {
@@ -187,8 +187,8 @@ try {
 
         case 'check':
             if (isset($_SESSION['role'])) {
-                // For admin, verify system is activated
-                if ($_SESSION['role'] === 'admin') {
+                // For admin/staff dashboard access, verify system is activated
+                if (in_array($_SESSION['role'], ['admin', 'staff'], true)) {
                     checkSystemActivation($db);
                 }
                 
@@ -197,9 +197,10 @@ try {
                     'role' => $_SESSION['role']
                 ];
                 
-                if ($_SESSION['role'] === 'admin') {
-                    $response['user_id'] = $_SESSION['user_id'];
-                    $response['username'] = $_SESSION['username'];
+                if (in_array($_SESSION['role'], ['admin', 'staff'], true)) {
+                    $response['user_id'] = $_SESSION['user_id'] ?? null;
+                    $response['username'] = $_SESSION['username'] ?? null;
+                    $response['name'] = $_SESSION['name'] ?? null;
                 } elseif ($_SESSION['role'] === 'member') {
                     $response['member_id'] = $_SESSION['member_id'];
                     $response['member_code'] = $_SESSION['member_code'];
